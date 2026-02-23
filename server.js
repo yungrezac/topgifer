@@ -41,10 +41,32 @@ http.createServer((req, res) => {
 
 // Создаем подключение к TikTok
 let tiktokLiveConnection = new WebcastPushConnection(TIKTOK_USERNAME);
+let currentTop1Username = null;
+
+// Функция для обновления текущего Топ-1 из базы
+async function updateTop1Cache() {
+    try {
+        const { data, error } = await supabase
+            .from('top_donators')
+            .select('username')
+            .order('coins', { ascending: false })
+            .limit(1)
+            .single();
+        
+        if (data && !error) {
+            currentTop1Username = data.username;
+        }
+    } catch (e) {
+        console.error("Ошибка при получении Топ 1:", e);
+    }
+}
 
 // Функция старта с авто-реконнектом
 function connectToTikTok() {
     console.log(`Подключение к стриму @${TIKTOK_USERNAME}...`);
+    
+    // Получаем актуального лидера перед стартом
+    updateTop1Cache();
     
     tiktokLiveConnection.connect().then(state => {
         console.log(`✅ Подключено! Стрим ID: ${state.roomId}`);
@@ -52,6 +74,52 @@ function connectToTikTok() {
         console.error('❌ Ошибка подключения. Повтор через 10 секунд...', err.message);
         setTimeout(connectToTikTok, 10000);
     });
+}
+
+// === СОБЫТИЕ 1: ПОЛЬЗОВАТЕЛЬ ЗАШЕЛ НА СТРИМ ===
+tiktokLiveConnection.on('member', async (data) => {
+    const username = data.uniqueId;
+    const avatar = data.profilePictureUrl;
+
+    // Срабатываем ТОЛЬКО если зашел лидер
+    if (currentTop1Username && username === currentTop1Username) {
+        console.log(`👑 ВНИМАНИЕ! ЗАШЕЛ ТОП 1: ${username}`);
+
+        await supabase.from('stream_events').insert([{
+            type: 'join',
+            username: username,
+            avatar_url: avatar
+        }]);
+    }
+});
+
+// === СОБЫТИЕ 2: ПОДАРОК ===
+tiktokLiveConnection.on('gift', async (data) => {
+    if (data.giftType === 1 && !data.repeatEnd) return;
+
+    const username = data.uniqueId;
+    const coins = data.diamondCount * data.repeatCount;
+    const avatar = data.profilePictureUrl;
+
+    console.log(`🎁 Подарок от ${username}: ${coins} монет!`);
+
+    const { data: userRecord } = await supabase
+        .from('top_donators')
+        .select('coins')
+        .eq('username', username)
+        .single();
+
+    const currentCoins = userRecord ? userRecord.coins : 0;
+
+    await supabase.from('top_donators').upsert([{
+        username: username,
+        coins: currentCoins + coins,
+        avatar_url: avatar
+    }], { onConflict: 'username' });
+
+    // Обновляем кэш Топ-1, так как после подарка лидер мог смениться
+    await updateTop1Cache();
+});
 }
 
 // === СОБЫТИЕ 1: ПОЛЬЗОВАТЕЛЬ ЗАШЕЛ НА СТРИМ ===
