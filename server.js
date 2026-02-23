@@ -1,8 +1,10 @@
 const { WebcastPushConnection } = require('tiktok-live-connector');
 const { createClient } = require('@supabase/supabase-js');
-const http = require('http'); // Добавляем встроенный модуль http
+const http = require('http'); 
+const fs = require('fs'); // Добавляем модуль для работы с файлами
+const path = require('path'); // Добавляем модуль для путей
 
-// Настройки Supabase (теперь берем из переменных окружения Railway)
+// Настройки Supabase (берем из переменных окружения Railway)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
@@ -10,17 +12,34 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 // Логин стримера в TikTok (тоже из переменных окружения)
 const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME;
 
-// === СОЗДАЕМ ВЕБ-СЕРВЕР ДЛЯ RAILWAY ===
+// === ВЕБ-СЕРВЕР ===
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Виджет TikTok Топ-1 работает и слушает стрим: ' + TIKTOK_USERNAME);
+    // Если запрашивают страницу виджета (учитываем возможные параметры вроде ?obs=1)
+    if (req.url.startsWith('/tiktok_top_widget.html')) {
+        const filePath = path.join(__dirname, 'tiktok_top_widget.html');
+        
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end('Файл виджета не найден. Убедитесь, что tiktok_top_widget.html загружен на Railway.');
+                return;
+            }
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+    } 
+    // Для всех остальных ссылок (например, главной страницы)
+    else {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`Сервер работает и слушает TikTok стримера: @${TIKTOK_USERNAME}. Чтобы открыть виджет, перейдите по адресу /tiktok_top_widget.html`);
+    }
 }).listen(PORT, () => {
     console.log(`HTTP сервер запущен на порту ${PORT}`);
 });
 // ======================================
 
-// Создаем подключение
+// Создаем подключение к TikTok
 let tiktokLiveConnection = new WebcastPushConnection(TIKTOK_USERNAME);
 
 // Функция старта с авто-реконнектом
@@ -42,7 +61,6 @@ tiktokLiveConnection.on('member', async (data) => {
 
     console.log(`👋 Зашел: ${username}`);
 
-    // Отправляем событие в Supabase
     await supabase.from('stream_events').insert([{
         type: 'join',
         username: username,
@@ -52,7 +70,6 @@ tiktokLiveConnection.on('member', async (data) => {
 
 // === СОБЫТИЕ 2: ПОДАРОК ===
 tiktokLiveConnection.on('gift', async (data) => {
-    // Учитываем только подарки, которые полностью отправились (не комбо в процессе)
     if (data.giftType === 1 && !data.repeatEnd) return;
 
     const username = data.uniqueId;
@@ -61,8 +78,6 @@ tiktokLiveConnection.on('gift', async (data) => {
 
     console.log(`🎁 Подарок от ${username}: ${coins} монет!`);
 
-    // Обновляем счетчик дарителя в Supabase (Upsert - добавит или обновит)
-    // 1. Получаем текущие монеты
     const { data: userRecord } = await supabase
         .from('top_donators')
         .select('coins')
@@ -71,7 +86,6 @@ tiktokLiveConnection.on('gift', async (data) => {
 
     const currentCoins = userRecord ? userRecord.coins : 0;
 
-    // 2. Сохраняем новую сумму
     await supabase.from('top_donators').upsert([{
         username: username,
         coins: currentCoins + coins,
@@ -79,7 +93,6 @@ tiktokLiveConnection.on('gift', async (data) => {
     }], { onConflict: 'username' });
 });
 
-// Обработка дисконнекта (например стрим закончился или лаг сети)
 tiktokLiveConnection.on('disconnected', () => {
     console.warn('⚠️ Отключено от TikTok. Пробуем переподключиться...');
     setTimeout(connectToTikTok, 5000);
