@@ -1,17 +1,24 @@
-// 1. Инициализация проекта:
-// npm init -y
-// npm install tiktok-live-connector @supabase/supabase-js
-
 const { WebcastPushConnection } = require('tiktok-live-connector');
 const { createClient } = require('@supabase/supabase-js');
+const http = require('http'); // Добавляем встроенный модуль http
 
-// Настройки Supabase
-const SUPABASE_URL = 'https://zagvyrqnayxdbqkcjqud.supabase.co';
-const SUPABASE_SERVICE_KEY = 'sb_publishable_glnqsWdFcmaHOzUrfD5fGA_dt6xiB1f'; // Нужен Service Key для записи в БД
+// Настройки Supabase (теперь берем из переменных окружения Railway)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// Логин стримера в TikTok (без @)
-const TIKTOK_USERNAME = 'tyler_river';
+// Логин стримера в TikTok (тоже из переменных окружения)
+const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME;
+
+// === СОЗДАЕМ ВЕБ-СЕРВЕР ДЛЯ RAILWAY ===
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Виджет TikTok Топ-1 работает и слушает стрим: ' + TIKTOK_USERNAME);
+}).listen(PORT, () => {
+    console.log(`HTTP сервер запущен на порту ${PORT}`);
+});
+// ======================================
 
 // Создаем подключение
 let tiktokLiveConnection = new WebcastPushConnection(TIKTOK_USERNAME);
