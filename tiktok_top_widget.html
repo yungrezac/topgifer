@@ -6,8 +6,6 @@
     <title>TikTok Top 1 Widget</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <!-- Подключаем библиотеку Supabase -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body {
             background-color: transparent;
@@ -107,41 +105,27 @@
     </div>
 
     <script>
-        // ==========================================
-        // 🔧 НАСТРОЙКИ SUPABASE (ОБЯЗАТЕЛЬНО ЗАПОЛНИТЕ!)
-        // ==========================================
-        const SUPABASE_URL = 'https://zagvyrqnayxdbqkcjqud.supabase.co'; // ВСТАВИТЬ СЮДА
-        const SUPABASE_ANON_KEY = 'sb_publishable_glnqsWdFcmaHOzUrfD5fGA_dt6xiB1f'; // ВСТАВИТЬ СЮДА
-        
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        let currentTop1Coins = 0;
+        // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ (Server-Sent Events) ===
+        // Подключаемся к нашему же серверу на Railway по пути /events
+        const eventSource = new EventSource('/events');
 
-        // 1. Получаем текущего Топ-1 и его монеты при загрузке
-        async function fetchTop1Info() {
-            const { data } = await supabase
-                .from('top_donators')
-                .select('*')
-                .order('coins', { ascending: false })
-                .limit(1)
-                .single();
+        eventSource.onopen = () => {
+            console.log('✅ Подключено к серверу виджетов!');
+        };
+
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
             
-            if (data) {
-                currentTop1Coins = data.coins;
+            // Если сервер прислал команду на вход Топ-1
+            if (data.type === 'entrance') {
+                playEntranceAnimation(data.username, data.avatar, data.coins);
             }
-        }
+        };
 
-        // 2. Слушаем события входа из базы данных
-        supabase
-            .channel('stream-events')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stream_events' }, payload => {
-                if (payload.new.type === 'join') {
-                    playEntranceAnimation(payload.new.username, payload.new.avatar_url, currentTop1Coins);
-                }
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'top_donators' }, fetchTop1Info)
-            .subscribe();
-
-        fetchTop1Info(); 
+        eventSource.onerror = () => {
+            console.error('❌ Потеряна связь с сервером. Переподключение...');
+            // Браузер (OBS) сам автоматически попытается переподключиться
+        };
 
         // === АНИМАЦИЯ ===
         let isAnimating = false;
