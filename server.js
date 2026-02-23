@@ -4,68 +4,104 @@ const http = require('http');
 const fs = require('fs'); 
 const path = require('path'); 
 
-// Настройки Supabase (берем из переменных окружения Railway)
+// Настройки Supabase
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// Логин стримера в TikTok (тоже из переменных окружения)
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Не заданы ключи Supabase!");
+    process.exit(1); 
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME;
 
-// === ВЕБ-СЕРВЕР (Для отдачи HTML в OBS и поддержания Railway) ===
+if (!TIKTOK_USERNAME) {
+    console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Не задан логин TikTok!");
+    process.exit(1);
+}
+
+// === УПРАВЛЕНИЕ ВИДЖЕТАМИ (Прямая связь с OBS) ===
+let sseClients = [];
+
+function broadcastToWidgets(eventData) {
+    const payload = `data: ${JSON.stringify(eventData)}\n\n`;
+    sseClients.forEach(client => client.write(payload));
+}
+
+// === ВЕБ-СЕРВЕР ===
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
-    // Если запрашивают страницу виджета
+    // 1. Канал связи для виджета
+    if (req.url === '/events') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+        });
+        sseClients.push(res);
+        req.on('close', () => {
+            sseClients = sseClients.filter(c => c !== res);
+        });
+        return;
+    }
+
+    // 2. Отдача самого HTML файла
     if (req.url.startsWith('/tiktok_top_widget.html')) {
         const filePath = path.join(__dirname, 'tiktok_top_widget.html');
-        
         fs.readFile(filePath, (err, data) => {
             if (err) {
                 res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('Файл виджета не найден. Убедитесь, что tiktok_top_widget.html загружен на сервер.');
+                res.end('Файл виджета не найден.');
                 return;
             }
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(data);
         });
+        return;
     } 
-    // Для всех остальных ссылок
-    else {
-        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`Сервер работает и слушает TikTok стримера: @${TIKTOK_USERNAME}. Чтобы открыть виджет, добавьте к ссылке /tiktok_top_widget.html?obs=1`);
-    }
+    
+    // 3. Главная страница
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(`Сервер работает! Подключен к TikTok: @${TIKTOK_USERNAME}. Подключено виджетов OBS: ${sseClients.length}`);
+    
 }).listen(PORT, () => {
     console.log(`HTTP сервер запущен на порту ${PORT}`);
 });
-// ======================================
 
-// Создаем подключение к TikTok
+// === TIKTOK КОННЕКТОР ===
 let tiktokLiveConnection = new WebcastPushConnection(TIKTOK_USERNAME);
-let currentTop1Username = null;
+let currentTop1 = { username: null, coins: 0 };
 
-// Функция для обновления текущего Топ-1 из базы
 async function updateTop1Cache() {
     try {
         const { data, error } = await supabase
             .from('top_donators')
-            .select('username')
+            .select('username, coins')
             .order('coins', { ascending: false })
             .limit(1)
             .single();
         
         if (data && !error) {
-            currentTop1Username = data.username;
+            currentTop1 = { username: data.username, coins: data.coins };
+            console.log(`🏆 Текущий ТОП-1 в памяти: ${currentTop1.username} (${currentTop1.coins} монет)`);
         }
     } catch (e) {
         console.error("Ошибка при получении Топ 1:", e);
     }
 }
 
-// Функция старта с авто-реконнектом
+// Слушаем изменения в базе (если вы накрутили монеты руками)
+supabase
+    .channel('server-db-listener')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'top_donators' }, () => {
+        updateTop1Cache();
+    })
+    .subscribe();
+
 function connectToTikTok() {
     console.log(`Подключение к стриму @${TIKTOK_USERNAME}...`);
-    
-    // Получаем актуального лидера перед стартом
     updateTop1Cache();
     
     tiktokLiveConnection.connect().then(state => {
@@ -76,20 +112,24 @@ function connectToTikTok() {
     });
 }
 
-// === СОБЫТИЕ 1: ПОЛЬЗОВАТЕЛЬ ЗАШЕЛ НА СТРИМ ===
+// === СОБЫТИЕ 1: ВХОД ===
 tiktokLiveConnection.on('member', async (data) => {
     const username = data.uniqueId;
     const avatar = data.profilePictureUrl;
 
-    // Срабатываем ТОЛЬКО если зашел лидер
-    if (currentTop1Username && username === currentTop1Username) {
-        console.log(`👑 ВНИМАНИЕ! ЗАШЕЛ ТОП 1: ${username}`);
+    if (currentTop1.username && username === currentTop1.username) {
+        console.log(`👑 ВНИМАНИЕ! ЗАШЕЛ ТОП 1: ${username}. Отправляем команду в OBS...`);
 
-        await supabase.from('stream_events').insert([{
-            type: 'join',
+        // Прямая команда в виджет OBS показать анимацию!
+        broadcastToWidgets({
+            type: 'entrance',
             username: username,
-            avatar_url: avatar
-        }]);
+            avatar: avatar,
+            coins: currentTop1.coins
+        });
+
+        // Запись в базу для истории
+        await supabase.from('stream_events').insert([{ type: 'join', username: username, avatar_url: avatar }]);
     }
 });
 
@@ -117,15 +157,12 @@ tiktokLiveConnection.on('gift', async (data) => {
         avatar_url: avatar
     }], { onConflict: 'username' });
 
-    // Обновляем кэш Топ-1, так как после подарка лидер мог смениться
     await updateTop1Cache();
 });
 
-// === ОБРЫВ СВЯЗИ ===
 tiktokLiveConnection.on('disconnected', () => {
     console.warn('⚠️ Отключено от TikTok. Пробуем переподключиться...');
     setTimeout(connectToTikTok, 5000);
 });
 
-// Запуск
 connectToTikTok();
