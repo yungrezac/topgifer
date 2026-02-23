@@ -48,6 +48,12 @@
             background: linear-gradient(135deg, rgba(20,20,30,0.95), rgba(10,10,15,0.95));
             box-shadow: 0 0 80px rgba(255, 215, 0, 0.5), inset 0 0 40px rgba(255, 215, 0, 0.3);
             border: 3px solid rgba(255, 215, 0, 0.6);
+            transition: all 0.5s ease;
+        }
+
+        .epic-glow.new-leader {
+            box-shadow: 0 0 80px rgba(74, 222, 128, 0.5), inset 0 0 40px rgba(74, 222, 128, 0.3);
+            border-color: rgba(74, 222, 128, 0.6);
         }
 
         .rays {
@@ -80,21 +86,22 @@
 </head>
 <body class="w-screen h-screen relative">
 
+    <!-- Статус подключения (Офлайн / Онлайн) -->
     <div id="status-overlay" class="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-700 z-40">
         <div class="bg-black/80 px-8 py-5 rounded-3xl border border-white/10 flex flex-col items-center shadow-2xl">
             <div id="status-dot" class="w-5 h-5 rounded-full bg-yellow-500 animate-pulse mb-3 shadow-[0_0_15px_currentColor]"></div>
-            <h3 class="text-2xl font-bold text-gray-200 tracking-widest uppercase" id="status-text">ОЖИДАНИЕ СТРИМЕРА...</h3>
-            <p class="text-gray-500 text-sm mt-2" id="status-subtext">Подключение к TikTok</p>
+            <h3 class="text-2xl font-bold text-gray-200 tracking-widest uppercase" id="status-text">ПОДКЛЮЧЕНИЕ...</h3>
+            <p class="text-gray-500 text-sm mt-2" id="status-subtext">Связь с сервером</p>
         </div>
     </div>
 
-    <!-- Анимация -->
+    <!-- Анимация Входа / Нового Лидера -->
     <div id="entrance-alert" class="w-[800px] glass-panel epic-glow p-12 rounded-[2.5rem] flex flex-col items-center justify-center relative z-50 overflow-hidden">
         <div class="rays"></div>
         
         <div class="text-7xl mb-4 crown-icon z-10 drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]">👑</div>
         
-        <div class="relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 bg-gray-900">
+        <div class="relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 bg-gray-900 transition-colors duration-500" id="avatar-container">
             <img id="entrance-avatar" src="" alt="Avatar" class="w-full h-full object-cover">
         </div>
         
@@ -114,6 +121,7 @@
     </div>
 
     <script>
+        // Получаем имя стримера из ссылки безопасно
         const urlParams = new URLSearchParams(window.location.search);
         const targetStreamer = urlParams.get('user')?.replace('@', '').trim().toLowerCase();
 
@@ -123,38 +131,58 @@
         const statusDot = document.getElementById('status-dot');
 
         if (!targetStreamer) {
-            statusText.textContent = "ОШИБКА URL";
-            statusSubtext.textContent = "Добавьте ?user=ЛОГИН в ссылку OBS";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3";
+            statusText.textContent = "ОШИБКА НАСТРОЙКИ";
+            statusSubtext.textContent = "Укажите логин стримера: ?user=ЛОГИН";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3 shadow-[0_0_15px_red]";
             throw new Error("Не указан стример");
         }
 
-        statusSubtext.textContent = `@${targetStreamer}`;
+        statusSubtext.textContent = `Стример: @${targetStreamer}`;
 
-        // ПОДКЛЮЧЕНИЕ
+        // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ (SSE) ===
+        // Сервер теперь отправляет данные без буферизации для мгновенной реакции
         const eventSource = new EventSource(`/events?user=${targetStreamer}`);
 
+        eventSource.onopen = () => {
+            console.log('✅ Установлена связь с сервером');
+        };
+
         eventSource.onmessage = (event) => {
+            console.log("Данные от сервера:", event.data);
             const data = JSON.parse(event.data);
             
+            // 1. ОБРАБОТКА СТАТУСА (Онлайн/Офлайн)
             if (data.type === 'status') {
                 if (data.online) {
+                    // Скрываем плашку офлайна - делаем фон полностью прозрачным
                     statusOverlay.classList.add('opacity-0');
                     setTimeout(() => statusOverlay.style.display = 'none', 700);
                 } else {
+                    // Показываем плашку "Стрим офлайн"
                     statusOverlay.style.display = 'flex';
                     setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
                     statusText.textContent = "СТРИМ ОФЛАЙН";
-                    statusSubtext.textContent = `@${targetStreamer} не в сети`;
-                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3";
+                    statusSubtext.textContent = `@${targetStreamer} не ведет трансляцию`;
+                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
                 }
             }
 
+            // 2. ОБРАБОТКА АНИМАЦИИ ВХОДА ИЛИ НОВОГО РЕКОРДА
             if (data.type === 'entrance') {
                 playEntranceAnimation(data.username, data.avatar, data.coins, data.isNewLeader, data.isTest);
             }
         };
 
+        eventSource.onerror = (err) => {
+            console.error("Ошибка соединения, переподключение...", err);
+            statusOverlay.style.display = 'flex';
+            setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
+            statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
+            statusSubtext.textContent = "Пытаюсь переподключиться...";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_15px_red]";
+        };
+
+        // === ГЛАВНАЯ ФУНКЦИЯ АНИМАЦИИ ===
         let isAnimating = false;
         function playEntranceAnimation(username, avatar, coins, isNewLeader, isTest) {
             if (isAnimating) return;
@@ -163,42 +191,56 @@
             const alertBox = document.getElementById('entrance-alert');
             const titleEl = document.getElementById('entrance-title');
             const badgeEl = document.getElementById('entrance-badge');
+            const avatarContainer = document.getElementById('avatar-container');
+            const badgeText = document.getElementById('entrance-badge-text');
             
-            // Настройка текста в зависимости от типа события
+            // Меняем дизайн в зависимости от того, побит ли рекорд
             if (isNewLeader) {
+                // Дизайн "Новый Король Стрима" (Зеленые и неоновые тона)
+                alertBox.classList.add('new-leader');
                 titleEl.textContent = "🚨 РЕКОРД ПОБИТ 🚨";
                 titleEl.className = "text-4xl text-green-400 font-black mb-2 uppercase tracking-widest drop-shadow-[0_0_10px_rgba(74,222,128,0.8)] z-10 animate-pulse";
                 badgeEl.className = "bg-gradient-to-r from-green-600/60 via-green-400/60 to-green-600/60 px-12 py-5 rounded-full border-2 border-green-400/80 shadow-[0_0_40px_rgba(74,222,128,0.6)] z-10 transform scale-110 transition-all";
-                document.getElementById('entrance-badge-text').className = "text-green-100 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
-                document.getElementById('entrance-badge-text').textContent = "НОВЫЙ КОРОЛЬ СТРИМА";
+                avatarContainer.className = "relative avatar-container w-48 h-48 rounded-full border-[6px] border-green-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(74,222,128,0.6)] z-10 bg-gray-900 transition-colors duration-500";
+                badgeText.className = "text-green-100 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
+                badgeText.textContent = "НОВЫЙ КОРОЛЬ СТРИМА";
             } else {
+                // Стандартный дизайн "Топ-1 зашел" (Золотые тона)
+                alertBox.classList.remove('new-leader');
                 titleEl.textContent = isTest ? "ТЕСТОВЫЙ ЗАПУСК" : "Внимание! На стрим зашел";
-                titleEl.className = "text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10";
-                badgeEl.className = "bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transition-all";
-                document.getElementById('entrance-badge-text').className = "text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
-                document.getElementById('entrance-badge-text').textContent = "ТОП 1 ДАРИТЕЛЬ";
+                titleEl.className = "text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10 transition-colors";
+                badgeEl.className = "bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transform hover:scale-105 transition-all";
+                avatarContainer.className = "relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 bg-gray-900 transition-colors duration-500";
+                badgeText.className = "text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
+                badgeText.textContent = "ТОП 1 ДАРИТЕЛЬ";
             }
             
+            // Подставляем данные пользователя
             document.getElementById('entrance-username').textContent = username;
             document.getElementById('entrance-avatar').src = avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username;
             document.getElementById('entrance-coins').textContent = (coins || 0).toLocaleString();
 
+            // Проигрываем звук
             const entranceSound = new Audio('https://actions.google.com/sounds/v1/crowds/crowd_cheer.ogg');
             entranceSound.volume = 0.6;
             entranceSound.play().catch(()=>{});
 
+            // Показываем плашку
             alertBox.classList.add('active');
 
+            // Запускаем конфетти 3 раза подряд для эффекта
             fireConfetti();
             setTimeout(fireConfetti, 500);
             setTimeout(fireConfetti, 1000);
 
+            // Прячем анимацию через 6 секунд и возвращаем флаг в false
             setTimeout(() => {
                 alertBox.classList.remove('active');
-                setTimeout(() => { isAnimating = false; }, 600);
-            }, 5000);
+                setTimeout(() => { isAnimating = false; }, 600); // Ждем пока закончится CSS анимация скрытия
+            }, 6000);
         }
 
+        // === ЭФФЕКТ КОНФЕТТИ ===
         function fireConfetti() {
             var duration = 3 * 1000;
             var end = Date.now() + duration;
