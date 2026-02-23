@@ -110,8 +110,8 @@
         // ==========================================
         // 🔧 НАСТРОЙКИ SUPABASE (ОБЯЗАТЕЛЬНО ЗАПОЛНИТЕ!)
         // ==========================================
-        const SUPABASE_URL = 'https://zagvyrqnayxdbqkcjqud.supabase.co'; // Пример: https://xxxx.supabase.co
-        const SUPABASE_ANON_KEY = 'sb_publishable_glnqsWdFcmaHOzUrfD5fGA_dt6xiB1f'; // Публичный ключ (anon public)
+        const SUPABASE_URL = 'https://zagvyrqnayxdbqkcjqud.supabase.co'; // ВСТАВИТЬ СЮДА
+        const SUPABASE_ANON_KEY = 'sb_publishable_glnqsWdFcmaHOzUrfD5fGA_dt6xiB1f'; // ВСТАВИТЬ СЮДА
         
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         let currentTop1Coins = 0;
@@ -135,15 +135,13 @@
             .channel('stream-events')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stream_events' }, payload => {
                 if (payload.new.type === 'join') {
-                    // Сервер уже отфильтровал событие, так что здесь точно зашел Топ-1
                     playEntranceAnimation(payload.new.username, payload.new.avatar_url, currentTop1Coins);
                 }
             })
-            // Также слушаем таблицу донатеров, чтобы всегда знать актуальное количество монет лидера
             .on('postgres_changes', { event: '*', schema: 'public', table: 'top_donators' }, fetchTop1Info)
             .subscribe();
 
-        fetchTop1Info(); // Вызываем при старте
+        fetchTop1Info(); 
 
         // === АНИМАЦИЯ ===
         let isAnimating = false;
@@ -157,20 +155,16 @@
             document.getElementById('entrance-avatar').src = avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username;
             document.getElementById('entrance-coins').textContent = (coins || 0).toLocaleString();
 
-            // Звук
             const entranceSound = new Audio('https://actions.google.com/sounds/v1/crowds/crowd_cheer.ogg');
             entranceSound.volume = 0.6;
             entranceSound.play().catch(e => console.log('Звук заблокирован до первого клика (в OBS работает)'));
 
-            // Показываем плашку
             alertBox.classList.add('active');
 
-            // Конфетти
             fireConfetti();
             setTimeout(fireConfetti, 500);
             setTimeout(fireConfetti, 1000);
 
-            // Прячем через 5 секунд
             setTimeout(() => {
                 alertBox.classList.remove('active');
                 setTimeout(() => { isAnimating = false; }, 500);
