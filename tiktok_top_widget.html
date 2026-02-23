@@ -124,16 +124,15 @@
         const statusDot = document.getElementById('status-dot');
 
         if (!targetStreamer) {
-            statusText.textContent = "ОШИБКА";
-            statusSubtext.textContent = "Добавьте ?user=ЛОГИН_СТРИМЕРА в ссылку OBS";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3";
+            statusText.textContent = "ОШИБКА URL";
+            statusSubtext.textContent = "Добавьте ?user=ЛОГИН_СТРИМЕРА в конец ссылки в OBS";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3 shadow-[0_0_15px_red]";
             throw new Error("Не указан стример в URL");
         }
 
         statusSubtext.textContent = `@${targetStreamer}`;
 
         // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ ===
-        // Передаем серверу, какого стримера мы хотим слушать
         const eventSource = new EventSource(`/events?user=${targetStreamer}`);
 
         eventSource.onopen = () => {
@@ -141,16 +140,16 @@
         };
 
         eventSource.onmessage = (event) => {
+            console.log("Получены данные от сервера:", event.data);
             const data = JSON.parse(event.data);
             
-            // Обработка статуса стрима (Онлайн/Офлайн)
+            // Обработка статуса стрима
             if (data.type === 'status') {
                 if (data.online) {
                     statusOverlay.classList.add('opacity-0');
                     setTimeout(() => statusOverlay.style.display = 'none', 700);
                 } else {
                     statusOverlay.style.display = 'flex';
-                    // Небольшая задержка перед возвращением opacity для плавности
                     setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
                     statusText.textContent = "СТРИМ ОФЛАЙН";
                     statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
@@ -163,11 +162,13 @@
             }
         };
 
-        eventSource.onerror = () => {
+        eventSource.onerror = (err) => {
+            console.error("Ошибка соединения SSE:", err);
             statusOverlay.style.display = 'flex';
             setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
             statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3";
+            statusSubtext.textContent = "Переподключение...";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_15px_red]";
         };
 
         // === АНИМАЦИЯ ===
@@ -192,9 +193,10 @@
             setTimeout(fireConfetti, 500);
             setTimeout(fireConfetti, 1000);
 
+            // Прячем анимацию через 5 секунд и надежно сбрасываем статус
             setTimeout(() => {
                 alertBox.classList.remove('active');
-                setTimeout(() => { isAnimating = false; }, 500);
+                setTimeout(() => { isAnimating = false; }, 600);
             }, 5000);
         }
 
@@ -208,6 +210,16 @@
                 if (Date.now() < end) requestAnimationFrame(frame);
             }());
         }
+
+        // ==========================================
+        // СЕКРЕТНЫЙ ТЕСТ ДЛЯ ПРОВЕРКИ АНИМАЦИИ
+        // Кликните мышкой в любое место окна, чтобы проверить анимацию!
+        // ==========================================
+        window.addEventListener('click', () => {
+            console.log("Тестовый запуск анимации по клику...");
+            playEntranceAnimation("ТЕСТОВЫЙ_КОРОЛЬ", "https://api.dicebear.com/7.x/avataaars/svg?seed=king&backgroundColor=b6e3f4", 9999999);
+        });
+
     </script>
 </body>
 </html>
