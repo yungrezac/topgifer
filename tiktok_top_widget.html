@@ -140,8 +140,9 @@
         statusSubtext.textContent = `Стример: @${targetStreamer}`;
 
         // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ (SSE) ===
-        // Сервер теперь отправляет данные без буферизации для мгновенной реакции
         const eventSource = new EventSource(`/events?user=${targetStreamer}`);
+        
+        let offlineGraceTimer = null; // Таймер защиты от ложных отключений
 
         eventSource.onopen = () => {
             console.log('✅ Установлена связь с сервером');
@@ -154,16 +155,22 @@
             // 1. ОБРАБОТКА СТАТУСА (Онлайн/Офлайн)
             if (data.type === 'status') {
                 if (data.online) {
+                    // Отменяем таймер отключения, если связь восстановилась
+                    clearTimeout(offlineGraceTimer);
+                    
                     // Скрываем плашку офлайна - делаем фон полностью прозрачным
                     statusOverlay.classList.add('opacity-0');
                     setTimeout(() => statusOverlay.style.display = 'none', 700);
                 } else {
-                    // Показываем плашку "Стрим офлайн"
-                    statusOverlay.style.display = 'flex';
-                    setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
-                    statusText.textContent = "СТРИМ ОФЛАЙН";
-                    statusSubtext.textContent = `@${targetStreamer} не ведет трансляцию`;
-                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
+                    // Даем TikTok 10 секунд на переподключение прежде чем показывать ОФЛАЙН
+                    clearTimeout(offlineGraceTimer);
+                    offlineGraceTimer = setTimeout(() => {
+                        statusOverlay.style.display = 'flex';
+                        setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
+                        statusText.textContent = "СТРИМ ОФЛАЙН";
+                        statusSubtext.textContent = `@${targetStreamer} не в сети или перезапускает стрим`;
+                        statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
+                    }, 10000); // 10 секунд ожидания
                 }
             }
 
@@ -175,11 +182,15 @@
 
         eventSource.onerror = (err) => {
             console.error("Ошибка соединения, переподключение...", err);
-            statusOverlay.style.display = 'flex';
-            setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
-            statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
-            statusSubtext.textContent = "Пытаюсь переподключиться...";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_15px_red]";
+            // Если сервер вообще упал, тоже даем 10 секунд перед тем как паниковать на экране
+            clearTimeout(offlineGraceTimer);
+            offlineGraceTimer = setTimeout(() => {
+                statusOverlay.style.display = 'flex';
+                setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
+                statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
+                statusSubtext.textContent = "Пытаюсь переподключиться...";
+                statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_15px_red]";
+            }, 10000);
         };
 
         // === ГЛАВНАЯ ФУНКЦИЯ АНИМАЦИИ ===
@@ -196,7 +207,6 @@
             
             // Меняем дизайн в зависимости от того, побит ли рекорд
             if (isNewLeader) {
-                // Дизайн "Новый Король Стрима" (Зеленые и неоновые тона)
                 alertBox.classList.add('new-leader');
                 titleEl.textContent = "🚨 РЕКОРД ПОБИТ 🚨";
                 titleEl.className = "text-4xl text-green-400 font-black mb-2 uppercase tracking-widest drop-shadow-[0_0_10px_rgba(74,222,128,0.8)] z-10 animate-pulse";
@@ -205,7 +215,6 @@
                 badgeText.className = "text-green-100 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
                 badgeText.textContent = "НОВЫЙ КОРОЛЬ СТРИМА";
             } else {
-                // Стандартный дизайн "Топ-1 зашел" (Золотые тона)
                 alertBox.classList.remove('new-leader');
                 titleEl.textContent = isTest ? "ТЕСТОВЫЙ ЗАПУСК" : "Внимание! На стрим зашел";
                 titleEl.className = "text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10 transition-colors";
