@@ -6,12 +6,12 @@ const { WebcastPushConnection } = require('tiktok-live-connector');
 const { createClient } = require('@supabase/supabase-js');
 
 // Настройки Supabase
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-const SUPABASE_SERVICE_KEY = 'YOUR_SUPABASE_SERVICE_ROLE_KEY'; // Нужен Service Key для записи в БД
+const SUPABASE_URL = 'https://zagvyrqnayxdbqkcjqud.supabase.co';
+const SUPABASE_SERVICE_KEY = 'sb_publishable_glnqsWdFcmaHOzUrfD5fGA_dt6xiB1f'; // Нужен Service Key для записи в БД
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // Логин стримера в TikTok (без @)
-const TIKTOK_USERNAME = 'ВАШ_ТИКТОК_ЛОГИН';
+const TIKTOK_USERNAME = 'tyler_river';
 
 // Создаем подключение
 let tiktokLiveConnection = new WebcastPushConnection(TIKTOK_USERNAME);
