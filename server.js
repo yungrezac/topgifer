@@ -159,7 +159,7 @@ async function startTikTokConnection(streamerUsername) {
         const avatar = data.profilePictureUrl;
 
         // Логируем всех, кто заходит (для проверки)
-        // console.log(`[${streamerUsername}] Зашел зритель: ${rawUsername}`);
+        console.log(`[${streamerUsername}] Зашел зритель: ${rawUsername}`);
 
         if (streamData.currentTop1.username && incomingUser === streamData.currentTop1.username) {
             const now = Date.now();
