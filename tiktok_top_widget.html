@@ -80,7 +80,6 @@
 </head>
 <body class="w-screen h-screen relative">
 
-    <!-- Статус подключения (Офлайн / Онлайн) -->
     <div id="status-overlay" class="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-700 z-40">
         <div class="bg-black/80 px-8 py-5 rounded-3xl border border-white/10 flex flex-col items-center shadow-2xl">
             <div id="status-dot" class="w-5 h-5 rounded-full bg-yellow-500 animate-pulse mb-3 shadow-[0_0_15px_currentColor]"></div>
@@ -89,34 +88,34 @@
         </div>
     </div>
 
-    <!-- Анимация Входа -->
-    <div id="entrance-alert" class="w-[700px] glass-panel epic-glow p-12 rounded-[2.5rem] flex flex-col items-center justify-center relative z-50 overflow-hidden">
+    <!-- Анимация -->
+    <div id="entrance-alert" class="w-[800px] glass-panel epic-glow p-12 rounded-[2.5rem] flex flex-col items-center justify-center relative z-50 overflow-hidden">
         <div class="rays"></div>
         
         <div class="text-7xl mb-4 crown-icon z-10 drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]">👑</div>
         
-        <div class="relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10">
+        <div class="relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 bg-gray-900">
             <img id="entrance-avatar" src="" alt="Avatar" class="w-full h-full object-cover">
         </div>
         
-        <h2 class="text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10">Внимание! На стрим зашел</h2>
+        <!-- Заголовок, который будет меняться -->
+        <h2 id="entrance-title" class="text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10 transition-colors">Внимание! На стрим зашел</h2>
         
-        <h1 class="text-6xl font-extrabold gold-text mb-4 z-10 drop-shadow-xl" id="entrance-username">Username</h1>
+        <h1 class="text-7xl font-extrabold gold-text mb-4 z-10 drop-shadow-xl" id="entrance-username">Username</h1>
         
         <div class="text-2xl font-bold text-white mb-6 z-10 flex items-center gap-2 bg-black/40 px-6 py-2 rounded-2xl border border-white/10 backdrop-blur-md">
             Отправил: <span id="entrance-coins" class="text-yellow-400 text-3xl mx-1 drop-shadow-md">0</span> 
             <svg class="w-7 h-7 text-yellow-400 drop-shadow-md" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 14a6 6 0 110-12 6 6 0 010 12zm0-9a1 1 0 00-1 1v2.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V8a1 1 0 00-1-1z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
         </div>
 
-        <div class="bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transform hover:scale-105 transition-transform">
-            <span class="text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl">ТОП 1 ДАРИТЕЛЬ</span>
+        <div id="entrance-badge" class="bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transform hover:scale-105 transition-all">
+            <span id="entrance-badge-text" class="text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl">ТОП 1 ДАРИТЕЛЬ</span>
         </div>
     </div>
 
     <script>
-        // Получаем имя стримера из ссылки (например: ?user=brothernature)
         const urlParams = new URLSearchParams(window.location.search);
-        const targetStreamer = urlParams.get('user');
+        const targetStreamer = urlParams.get('user')?.replace('@', '').trim().toLowerCase();
 
         const statusOverlay = document.getElementById('status-overlay');
         const statusText = document.getElementById('status-text');
@@ -125,25 +124,19 @@
 
         if (!targetStreamer) {
             statusText.textContent = "ОШИБКА URL";
-            statusSubtext.textContent = "Добавьте ?user=ЛОГИН_СТРИМЕРА в конец ссылки в OBS";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3 shadow-[0_0_15px_red]";
-            throw new Error("Не указан стример в URL");
+            statusSubtext.textContent = "Добавьте ?user=ЛОГИН в ссылку OBS";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3";
+            throw new Error("Не указан стример");
         }
 
         statusSubtext.textContent = `@${targetStreamer}`;
 
-        // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ ===
+        // ПОДКЛЮЧЕНИЕ
         const eventSource = new EventSource(`/events?user=${targetStreamer}`);
 
-        eventSource.onopen = () => {
-            console.log('✅ Подключено к серверу виджетов!');
-        };
-
         eventSource.onmessage = (event) => {
-            console.log("Получены данные от сервера:", event.data);
             const data = JSON.parse(event.data);
             
-            // Обработка статуса стрима
             if (data.type === 'status') {
                 if (data.online) {
                     statusOverlay.classList.add('opacity-0');
@@ -152,32 +145,39 @@
                     statusOverlay.style.display = 'flex';
                     setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
                     statusText.textContent = "СТРИМ ОФЛАЙН";
-                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
+                    statusSubtext.textContent = `@${targetStreamer} не в сети`;
+                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3";
                 }
             }
 
-            // Обработка входа ТОП 1
             if (data.type === 'entrance') {
-                playEntranceAnimation(data.username, data.avatar, data.coins);
+                playEntranceAnimation(data.username, data.avatar, data.coins, data.isNewLeader, data.isTest);
             }
         };
 
-        eventSource.onerror = (err) => {
-            console.error("Ошибка соединения SSE:", err);
-            statusOverlay.style.display = 'flex';
-            setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
-            statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
-            statusSubtext.textContent = "Переподключение...";
-            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_15px_red]";
-        };
-
-        // === АНИМАЦИЯ ===
         let isAnimating = false;
-        function playEntranceAnimation(username, avatar, coins) {
+        function playEntranceAnimation(username, avatar, coins, isNewLeader, isTest) {
             if (isAnimating) return;
             isAnimating = true;
 
             const alertBox = document.getElementById('entrance-alert');
+            const titleEl = document.getElementById('entrance-title');
+            const badgeEl = document.getElementById('entrance-badge');
+            
+            // Настройка текста в зависимости от типа события
+            if (isNewLeader) {
+                titleEl.textContent = "🚨 РЕКОРД ПОБИТ 🚨";
+                titleEl.className = "text-4xl text-green-400 font-black mb-2 uppercase tracking-widest drop-shadow-[0_0_10px_rgba(74,222,128,0.8)] z-10 animate-pulse";
+                badgeEl.className = "bg-gradient-to-r from-green-600/60 via-green-400/60 to-green-600/60 px-12 py-5 rounded-full border-2 border-green-400/80 shadow-[0_0_40px_rgba(74,222,128,0.6)] z-10 transform scale-110 transition-all";
+                document.getElementById('entrance-badge-text').className = "text-green-100 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
+                document.getElementById('entrance-badge-text').textContent = "НОВЫЙ КОРОЛЬ СТРИМА";
+            } else {
+                titleEl.textContent = isTest ? "ТЕСТОВЫЙ ЗАПУСК" : "Внимание! На стрим зашел";
+                titleEl.className = "text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10";
+                badgeEl.className = "bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transition-all";
+                document.getElementById('entrance-badge-text').className = "text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl";
+                document.getElementById('entrance-badge-text').textContent = "ТОП 1 ДАРИТЕЛЬ";
+            }
             
             document.getElementById('entrance-username').textContent = username;
             document.getElementById('entrance-avatar').src = avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username;
@@ -185,7 +185,7 @@
 
             const entranceSound = new Audio('https://actions.google.com/sounds/v1/crowds/crowd_cheer.ogg');
             entranceSound.volume = 0.6;
-            entranceSound.play().catch(e => console.log('Звук заблокирован (в OBS работает)'));
+            entranceSound.play().catch(()=>{});
 
             alertBox.classList.add('active');
 
@@ -193,7 +193,6 @@
             setTimeout(fireConfetti, 500);
             setTimeout(fireConfetti, 1000);
 
-            // Прячем анимацию через 5 секунд и надежно сбрасываем статус
             setTimeout(() => {
                 alertBox.classList.remove('active');
                 setTimeout(() => { isAnimating = false; }, 600);
@@ -210,16 +209,6 @@
                 if (Date.now() < end) requestAnimationFrame(frame);
             }());
         }
-
-        // ==========================================
-        // СЕКРЕТНЫЙ ТЕСТ ДЛЯ ПРОВЕРКИ АНИМАЦИИ
-        // Кликните мышкой в любое место окна, чтобы проверить анимацию!
-        // ==========================================
-        window.addEventListener('click', () => {
-            console.log("Тестовый запуск анимации по клику...");
-            playEntranceAnimation("ТЕСТОВЫЙ_КОРОЛЬ", "https://api.dicebear.com/7.x/avataaars/svg?seed=king&backgroundColor=b6e3f4", 9999999);
-        });
-
     </script>
 </body>
 </html>
