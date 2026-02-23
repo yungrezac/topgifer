@@ -16,6 +16,11 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const activeStreams = new Map(); 
 
+// Функция для очистки логинов (убираем @ и пробелы)
+function normalizeUser(user) {
+    return user ? user.replace('@', '').trim().toLowerCase() : null;
+}
+
 function broadcastToWidgets(streamer, eventData) {
     if (activeStreams.has(streamer)) {
         const payload = `data: ${JSON.stringify(eventData)}\n\n`;
@@ -58,12 +63,15 @@ http.createServer((req, res) => {
 
                             <!-- Контейнер для ссылки на виджет -->
                             <div id="widgetLinkContainer" class="hidden mt-6 p-4 bg-gray-900/80 border border-yellow-500/30 rounded-lg">
-                                <p class="text-sm text-yellow-400/80 mb-2 font-semibold">✅ Подключено! Ссылка для OBS (Браузерный источник):</p>
-                                <div class="flex items-center gap-2">
+                                <div class="flex justify-between items-center mb-2">
+                                    <p class="text-sm text-yellow-400/80 font-semibold">Фоновый процесс запущен!</p>
+                                    <div id="streamStatusText" class="text-sm"></div>
+                                </div>
+                                <div class="flex items-center gap-2 mb-2">
                                     <input type="text" id="widgetLink" readonly class="flex-1 bg-black/50 border border-gray-600 rounded px-3 py-2 text-gray-300 text-sm focus:outline-none selection:bg-yellow-500/30">
                                     <button onclick="copyLink()" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm transition font-medium">Копировать</button>
                                 </div>
-                                <p class="text-xs text-gray-500 mt-2">Установите ширину 1920 и высоту 1080 в настройках OBS.</p>
+                                <p class="text-xs text-gray-500">Вставьте эту ссылку в OBS (Браузер). Ширина: 1920, Высота: 1080.</p>
                             </div>
                         </div>
 
@@ -88,15 +96,22 @@ http.createServer((req, res) => {
                         box.innerHTML = '<span class="text-gray-500">[' + time + ']</span> ' + msg + '<br>' + box.innerHTML;
                     }
 
-                    function updateUI(connected, user) {
+                    function updateUI(connected, user, online) {
                         const btn = document.getElementById('connectBtn');
                         const linkBox = document.getElementById('widgetLinkContainer');
                         const linkInput = document.getElementById('widgetLink');
+                        const statusText = document.getElementById('streamStatusText');
 
                         if (connected) {
                             btn.textContent = 'Отключить';
                             btn.className = 'bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(220,38,38,0.3)] min-w-[140px]';
                             linkBox.classList.remove('hidden');
+                            
+                            if (online) {
+                                statusText.innerHTML = '<span class="text-green-400 font-bold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span> Стрим ОНЛАЙН</span>';
+                            } else {
+                                statusText.innerHTML = '<span class="text-gray-400 font-bold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-gray-400"></span> Стрим ОФЛАЙН</span>';
+                            }
                             
                             const currentUrl = window.location.origin;
                             linkInput.value = currentUrl + '/tiktok_top_widget.html?user=' + user;
@@ -114,20 +129,23 @@ http.createServer((req, res) => {
                     }
 
                     async function checkStatus() {
-                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase().replace('@', '');
                         if (!user) {
-                            updateUI(false, '');
+                            updateUI(false, '', false);
                             return;
                         }
                         try {
                             const res = await fetch('/api/status?user=' + user);
                             const data = await res.json();
-                            updateUI(data.connected, user);
+                            updateUI(data.connected, user, data.online);
                         } catch(e) {}
                     }
 
+                    // Опрашиваем статус каждые 3 секунды, чтобы обновлять индикатор Онлайн/Офлайн
+                    setInterval(checkStatus, 3000);
+
                     async function toggleConnection() {
-                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase().replace('@', '');
                         if(!user) return alert('Введите логин стримера!');
 
                         const btn = document.getElementById('connectBtn');
@@ -138,20 +156,20 @@ http.createServer((req, res) => {
                             try {
                                 const res = await fetch('/api/disconnect?user=' + user);
                                 log(await res.text());
-                                updateUI(false, user);
+                                checkStatus();
                             } catch(e) { log('Ошибка отключения'); }
                         } else {
                             log('Запрос на подключение к @' + user + '...');
                             try {
                                 const res = await fetch('/api/connect?user=' + user);
                                 log(await res.text());
-                                updateUI(true, user);
+                                checkStatus();
                             } catch(e) { log('Ошибка подключения'); }
                         }
                     }
 
                     async function testAnimation() {
-                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase().replace('@', '');
                         if(!user) return alert('Сначала введите логин стримера!');
                         log('Отправка тестового сигнала для @' + user + '...');
                         try {
@@ -178,21 +196,21 @@ http.createServer((req, res) => {
 
     // 2. API: РУЧНОЕ ПОДКЛЮЧЕНИЕ
     if (pathname === '/api/connect') {
-        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        const targetStreamer = normalizeUser(parsedUrl.query.user);
         if (!targetStreamer) return res.end("Ошибка: не указан логин.");
         
         if (!activeStreams.has(targetStreamer)) {
             startTikTokConnection(targetStreamer);
-            res.end(`✅ Фоновый процесс запущен для @${targetStreamer}. Подключение в процессе...`);
+            res.end(`✅ Фоновый процесс запущен для @${targetStreamer}. Ожидание стрима...`);
         } else {
-            res.end(`ℹ️ Сервер уже подключен к @${targetStreamer}.`);
+            res.end(`ℹ️ Сервер уже отслеживает @${targetStreamer}.`);
         }
         return;
     }
 
     // 3. API: РУЧНОЕ ОТКЛЮЧЕНИЕ
     if (pathname === '/api/disconnect') {
-        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        const targetStreamer = normalizeUser(parsedUrl.query.user);
         if (!targetStreamer) return res.end("Ошибка: не указан логин.");
         
         if (activeStreams.has(targetStreamer)) {
@@ -214,16 +232,17 @@ http.createServer((req, res) => {
 
     // 4. API: СТАТУС ПОДКЛЮЧЕНИЯ
     if (pathname === '/api/status') {
-        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        const targetStreamer = normalizeUser(parsedUrl.query.user);
         const isConnected = targetStreamer ? activeStreams.has(targetStreamer) : false;
+        const isOnline = isConnected ? activeStreams.get(targetStreamer).isOnline : false;
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ connected: isConnected }));
+        res.end(JSON.stringify({ connected: isConnected, online: isOnline }));
         return;
     }
 
     // 5. API: ТЕСТОВЫЙ ЗАПУСК АНИМАЦИИ
     if (pathname === '/api/test') {
-        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        const targetStreamer = normalizeUser(parsedUrl.query.user);
         if (!targetStreamer || !activeStreams.has(targetStreamer)) {
             return res.end("❌ Сначала подключитесь к стримеру (кнопка Подключить).");
         }
@@ -246,31 +265,36 @@ http.createServer((req, res) => {
 
     // 6. SSE КАНАЛ ДЛЯ ВИДЖЕТА (OBS)
     if (pathname === '/events') {
-        const targetStreamer = parsedUrl.query.user;
+        const targetStreamer = normalizeUser(parsedUrl.query.user);
         if (!targetStreamer) return res.end();
 
-        const normalizedStreamer = targetStreamer.replace('@', '').trim().toLowerCase();
-
+        // X-Accel-Buffering: no - КРИТИЧЕСКИ ВАЖНО для мгновенной передачи данных в Railway
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*'
+            'Access-Control-Allow-Origin': '*',
+            'X-Accel-Buffering': 'no'
         });
 
-        if (!activeStreams.has(normalizedStreamer)) {
-            startTikTokConnection(normalizedStreamer);
+        // Сразу отправляем комментарий, чтобы открыть поток данных в браузере
+        res.write(': connected\n\n');
+
+        if (!activeStreams.has(targetStreamer)) {
+            startTikTokConnection(targetStreamer);
         }
 
-        const streamData = activeStreams.get(normalizedStreamer);
+        const streamData = activeStreams.get(targetStreamer);
         streamData.sseClients.push(res);
+        
+        // Отправляем виджету текущий статус принудительно
         res.write(`data: ${JSON.stringify({ type: 'status', online: streamData.isOnline })}\n\n`);
 
         const keepAliveInterval = setInterval(() => { res.write(': keepalive\n\n'); }, 20000);
 
         req.on('close', () => {
             clearInterval(keepAliveInterval);
-            if (activeStreams.has(normalizedStreamer)) {
+            if (activeStreams.has(targetStreamer)) {
                 streamData.sseClients = streamData.sseClients.filter(c => c !== res);
             }
         });
@@ -337,7 +361,8 @@ async function startTikTokConnection(streamerUsername) {
             broadcastToWidgets(streamerUsername, { type: 'status', online: true });
         }).catch(err => {
             if (streamData.intentionalDisconnect) return;
-            console.error(`[${streamerUsername}] ❌ Ошибка подключения. Повтор через 15 сек...`);
+            // Если трансляция офлайн - это нормально, просто повторяем попытки
+            console.error(`[${streamerUsername}] ❌ Ошибка подключения (офлайн). Повтор через 15 сек...`);
             streamData.isOnline = false;
             broadcastToWidgets(streamerUsername, { type: 'status', online: false });
             setTimeout(connectToStream, 15000);
@@ -346,7 +371,6 @@ async function startTikTokConnection(streamerUsername) {
     connectToStream();
 
     // === ФУНКЦИЯ ПРОВЕРКИ АКТИВНОСТИ ТОП-1 ===
-    // Поскольку TikTok скрывает большинство входов (member), мы реагируем на любую активность лидера!
     const checkActivityAndAnnounce = (rawUsername, avatar, actionType) => {
         if (!streamData.currentTop1.username || !rawUsername) return;
         
@@ -355,7 +379,6 @@ async function startTikTokConnection(streamerUsername) {
         if (incomingUser === streamData.currentTop1.username) {
             const now = Date.now();
             
-            // Кулдаун 2 минуты, чтобы анимация не спамила
             if (now - streamData.currentTop1.lastAnnounced > 120000) {
                 console.log(`[${streamerUsername}] 👑 ТОП-1 ЗАМЕЧЕН НА СТРИМЕ (${actionType}): ${rawUsername}. Запуск виджета!`);
                 streamData.currentTop1.lastAnnounced = now;
@@ -368,7 +391,6 @@ async function startTikTokConnection(streamerUsername) {
                     isNewLeader: false
                 });
 
-                // Пишем в логи (асинхронно)
                 supabase.from('stream_events').insert([{ type: 'join', username: rawUsername, avatar_url: avatar }]).catch(()=>{});
             }
         }
@@ -387,11 +409,9 @@ async function startTikTokConnection(streamerUsername) {
         const coins = data.diamondCount * data.repeatCount;
         const avatar = data.profilePictureUrl;
 
-        // Если Топ-1 кидает подарок, он тоже считается активным на стриме
         checkActivityAndAnnounce(rawUsername, avatar, 'Подарок');
 
         try {
-            // 1. Узнаем, сколько у человека БЫЛО монет
             const { data: userRecord } = await supabase
                 .from('top_donators')
                 .select('coins')
@@ -403,20 +423,17 @@ async function startTikTokConnection(streamerUsername) {
 
             console.log(`[${streamerUsername}] 🎁 Подарок: ${rawUsername} кинул ${coins} монет (Всего: ${newTotalCoins})`);
 
-            // 2. МГНОВЕННАЯ ПРОВЕРКА В ОПЕРАТИВНОЙ ПАМЯТИ
             const leaderCoins = streamData.currentTop1.coins || 0;
             const leaderName = streamData.currentTop1.username;
 
             if (newTotalCoins > leaderCoins && leaderName !== normalizedUsername) {
                 console.log(`[${streamerUsername}] 🚨 НОВЫЙ ТОП-1 ДАРИТЕЛЬ: ${rawUsername} перебил рекорд!`);
                 
-                // Сразу записываем его в память сервера
                 streamData.currentTop1.username = normalizedUsername;
                 streamData.currentTop1.coins = newTotalCoins;
                 streamData.currentTop1.avatar = avatar;
-                streamData.currentTop1.lastAnnounced = Date.now(); // Даем кулдаун на обычные входы
+                streamData.currentTop1.lastAnnounced = Date.now(); 
 
-                // Моментально отправляем сигнал в виджет "Новый Король!"
                 broadcastToWidgets(streamerUsername, {
                     type: 'entrance',
                     username: rawUsername,
@@ -425,11 +442,9 @@ async function startTikTokConnection(streamerUsername) {
                     isNewLeader: true 
                 });
             } else if (leaderName === normalizedUsername) {
-                // Если это действующий лидер просто закинул еще, обновляем его счетчик
                 streamData.currentTop1.coins = newTotalCoins;
             }
 
-            // 3. Сохраняем в базу данных в фоновом режиме
             supabase.from('top_donators').upsert([{
                 username: rawUsername,
                 coins: newTotalCoins,
@@ -443,7 +458,6 @@ async function startTikTokConnection(streamerUsername) {
         }
     });
 
-    // === ОБРЫВ СВЯЗИ ===
     streamData.connection.on('disconnected', () => {
         if (streamData.intentionalDisconnect) {
             console.log(`[${streamerUsername}] 🛑 Умышленное отключение. Авто-реконнект отменен.`);
