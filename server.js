@@ -61,7 +61,6 @@ http.createServer((req, res) => {
                                 <button id="connectBtn" onclick="toggleConnection()" class="bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(234,179,8,0.3)] min-w-[140px]">Подключить</button>
                             </div>
 
-                            <!-- Контейнер для ссылки на виджет -->
                             <div id="widgetLinkContainer" class="hidden mt-6 p-4 bg-gray-900/80 border border-yellow-500/30 rounded-lg">
                                 <div class="flex justify-between items-center mb-2">
                                     <p class="text-sm text-yellow-400/80 font-semibold">Фоновый процесс запущен!</p>
@@ -141,7 +140,6 @@ http.createServer((req, res) => {
                         } catch(e) {}
                     }
 
-                    // Опрашиваем статус каждые 3 секунды, чтобы обновлять индикатор Онлайн/Офлайн
                     setInterval(checkStatus, 3000);
 
                     async function toggleConnection() {
@@ -268,7 +266,6 @@ http.createServer((req, res) => {
         const targetStreamer = normalizeUser(parsedUrl.query.user);
         if (!targetStreamer) return res.end();
 
-        // X-Accel-Buffering: no - КРИТИЧЕСКИ ВАЖНО для мгновенной передачи данных в Railway
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -277,7 +274,6 @@ http.createServer((req, res) => {
             'X-Accel-Buffering': 'no'
         });
 
-        // Сразу отправляем комментарий, чтобы открыть поток данных в браузере
         res.write(': connected\n\n');
 
         if (!activeStreams.has(targetStreamer)) {
@@ -287,7 +283,6 @@ http.createServer((req, res) => {
         const streamData = activeStreams.get(targetStreamer);
         streamData.sseClients.push(res);
         
-        // Отправляем виджету текущий статус принудительно
         res.write(`data: ${JSON.stringify({ type: 'status', online: streamData.isOnline })}\n\n`);
 
         const keepAliveInterval = setInterval(() => { res.write(': keepalive\n\n'); }, 20000);
@@ -321,8 +316,18 @@ http.createServer((req, res) => {
 async function startTikTokConnection(streamerUsername) {
     console.log(`[${streamerUsername}] Создаем фоновое подключение...`);
     
+    // УЛУЧШЕННОЕ ПОДКЛЮЧЕНИЕ: Маскируемся под браузер, чтобы TikTok не блокировал Railway
     const streamData = {
-        connection: new WebcastPushConnection(streamerUsername, { enableExtendedGiftInfo: true }),
+        connection: new WebcastPushConnection(streamerUsername, { 
+            enableExtendedGiftInfo: true,
+            requestOptions: {
+                timeout: 10000 // Увеличенный таймаут для стабильности
+            },
+            clientParams: {
+                "app_language": "ru-RU",
+                "device_platform": "web"
+            }
+        }),
         sseClients: [],
         currentTop1: { username: null, coins: 0, avatar: '', lastAnnounced: 0 },
         isOnline: false,
@@ -330,7 +335,6 @@ async function startTikTokConnection(streamerUsername) {
     };
     activeStreams.set(streamerUsername, streamData);
 
-    // Загружаем начального Топ-1 из базы при старте
     const loadInitialTop1 = async () => {
         try {
             const { data, error } = await supabase
@@ -361,8 +365,7 @@ async function startTikTokConnection(streamerUsername) {
             broadcastToWidgets(streamerUsername, { type: 'status', online: true });
         }).catch(err => {
             if (streamData.intentionalDisconnect) return;
-            // Если трансляция офлайн - это нормально, просто повторяем попытки
-            console.error(`[${streamerUsername}] ❌ Ошибка подключения (офлайн). Повтор через 15 сек...`);
+            console.error(`[${streamerUsername}] ❌ Ошибка подключения (офлайн/блок). Повтор через 15 сек...`);
             streamData.isOnline = false;
             broadcastToWidgets(streamerUsername, { type: 'status', online: false });
             setTimeout(connectToStream, 15000);
@@ -370,7 +373,6 @@ async function startTikTokConnection(streamerUsername) {
     };
     connectToStream();
 
-    // === ФУНКЦИЯ ПРОВЕРКИ АКТИВНОСТИ ТОП-1 ===
     const checkActivityAndAnnounce = (rawUsername, avatar, actionType) => {
         if (!streamData.currentTop1.username || !rawUsername) return;
         
@@ -400,7 +402,6 @@ async function startTikTokConnection(streamerUsername) {
     streamData.connection.on('chat', (data) => checkActivityAndAnnounce(data.uniqueId, data.profilePictureUrl, 'Чат'));
     streamData.connection.on('like', (data) => checkActivityAndAnnounce(data.uniqueId, data.profilePictureUrl, 'Лайк'));
 
-    // === СОБЫТИЕ ПОДАРКОВ И МГНОВЕННОЕ ВЫЧИСЛЕНИЕ РЕКОРДА ===
     streamData.connection.on('gift', async (data) => {
         if (data.giftType === 1 && !data.repeatEnd) return;
 
