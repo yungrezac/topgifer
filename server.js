@@ -96,7 +96,7 @@ async function startTikTokConnection(streamerUsername) {
     const streamData = {
         connection: new WebcastPushConnection(streamerUsername),
         sseClients: [],
-        currentTop1: { username: null, coins: 0 },
+        currentTop1: { username: null, coins: 0, lastAnnounced: 0 }, // Добавили lastAnnounced для кулдауна
         isOnline: false
     };
     activeStreams.set(streamerUsername, streamData);
@@ -115,8 +115,10 @@ async function startTikTokConnection(streamerUsername) {
                 // Если Топ 1 сменился, пишем в лог
                 if (streamData.currentTop1.username !== data.username) {
                     console.log(`[${streamerUsername}] 🏆 Новый ТОП-1: ${data.username} (${data.coins} монет)`);
+                    streamData.currentTop1.lastAnnounced = 0; // Сбрасываем кулдаун для нового лидера
                 }
-                streamData.currentTop1 = { username: data.username, coins: data.coins };
+                streamData.currentTop1.username = data.username;
+                streamData.currentTop1.coins = data.coins;
             }
         } catch (e) {
             console.error(`[${streamerUsername}] Ошибка обновления Топ 1:`, e);
@@ -141,24 +143,33 @@ async function startTikTokConnection(streamerUsername) {
     };
     connectToStream();
 
-    // === СОБЫТИЕ 1: ВХОД ===
-    streamData.connection.on('member', async (data) => {
-        const username = data.uniqueId;
-        const avatar = data.profilePictureUrl;
-
+    // === ЕДИНАЯ ФУНКЦИЯ ПРОВЕРКИ АКТИВНОСТИ ТОП-1 ===
+    // TikTok часто "глотает" события входа. Поэтому мы ловим любую активность!
+    const checkAndAnnounceTop1 = async (username, avatar, actionType) => {
         if (streamData.currentTop1.username && username === streamData.currentTop1.username) {
-            console.log(`[${streamerUsername}] 👑 ВНИМАНИЕ! ЗАШЕЛ ТОП 1: ${username}`);
+            const now = Date.now();
+            
+            // Кулдаун 2 минуты (120000 мс). Чтобы виджет не спамил, если ТОП-1 активно пишет в чат.
+            if (now - streamData.currentTop1.lastAnnounced > 120000) {
+                console.log(`[${streamerUsername}] 👑 ВНИМАНИЕ! ТОП 1 АКТИВЕН (${actionType}): ${username}`);
+                streamData.currentTop1.lastAnnounced = now;
 
-            broadcastToWidgets(streamerUsername, {
-                type: 'entrance',
-                username: username,
-                avatar: avatar,
-                coins: streamData.currentTop1.coins
-            });
+                broadcastToWidgets(streamerUsername, {
+                    type: 'entrance',
+                    username: username,
+                    avatar: avatar,
+                    coins: streamData.currentTop1.coins
+                });
 
-            await supabase.from('stream_events').insert([{ type: 'join', username: username, avatar_url: avatar }]);
+                await supabase.from('stream_events').insert([{ type: 'join', username: username, avatar_url: avatar }]);
+            }
         }
-    });
+    };
+
+    // Слушаем сразу ТРИ типа событий для максимальной надежности:
+    streamData.connection.on('member', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'зашел на стрим'));
+    streamData.connection.on('chat', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'написал в чат'));
+    streamData.connection.on('like', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'отправил лайк'));
 
     // === СОБЫТИЕ 2: ПОДАРОК ===
     streamData.connection.on('gift', async (data) => {
@@ -180,7 +191,6 @@ async function startTikTokConnection(streamerUsername) {
         }], { onConflict: 'username' });
 
         // Важно: После каждого подарка сразу пересчитываем лидера!
-        // Если кто-то перебьет рекорд, сервер тут же начнет ждать его.
         await updateTop1();
     });
 
