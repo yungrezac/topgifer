@@ -80,6 +80,15 @@
 </head>
 <body class="w-screen h-screen relative">
 
+    <!-- Статус подключения (Офлайн / Онлайн) -->
+    <div id="status-overlay" class="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-700 z-40">
+        <div class="bg-black/80 px-8 py-5 rounded-3xl border border-white/10 flex flex-col items-center shadow-2xl">
+            <div id="status-dot" class="w-5 h-5 rounded-full bg-yellow-500 animate-pulse mb-3 shadow-[0_0_15px_currentColor]"></div>
+            <h3 class="text-2xl font-bold text-gray-200 tracking-widest uppercase" id="status-text">ОЖИДАНИЕ СТРИМЕРА...</h3>
+            <p class="text-gray-500 text-sm mt-2" id="status-subtext">Подключение к TikTok</p>
+        </div>
+    </div>
+
     <!-- Анимация Входа -->
     <div id="entrance-alert" class="w-[700px] glass-panel epic-glow p-12 rounded-[2.5rem] flex flex-col items-center justify-center relative z-50 overflow-hidden">
         <div class="rays"></div>
@@ -105,9 +114,27 @@
     </div>
 
     <script>
-        // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ (Server-Sent Events) ===
-        // Подключаемся к нашему же серверу на Railway по пути /events
-        const eventSource = new EventSource('/events');
+        // Получаем имя стримера из ссылки (например: ?user=brothernature)
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetStreamer = urlParams.get('user');
+
+        const statusOverlay = document.getElementById('status-overlay');
+        const statusText = document.getElementById('status-text');
+        const statusSubtext = document.getElementById('status-subtext');
+        const statusDot = document.getElementById('status-dot');
+
+        if (!targetStreamer) {
+            statusText.textContent = "ОШИБКА";
+            statusSubtext.textContent = "Добавьте ?user=ЛОГИН_СТРИМЕРА в ссылку OBS";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 mb-3";
+            throw new Error("Не указан стример в URL");
+        }
+
+        statusSubtext.textContent = `@${targetStreamer}`;
+
+        // === ПОДКЛЮЧЕНИЕ К СЕРВЕРУ ===
+        // Передаем серверу, какого стримера мы хотим слушать
+        const eventSource = new EventSource(`/events?user=${targetStreamer}`);
 
         eventSource.onopen = () => {
             console.log('✅ Подключено к серверу виджетов!');
@@ -116,15 +143,31 @@
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
             
-            // Если сервер прислал команду на вход Топ-1
+            // Обработка статуса стрима (Онлайн/Офлайн)
+            if (data.type === 'status') {
+                if (data.online) {
+                    statusOverlay.classList.add('opacity-0');
+                    setTimeout(() => statusOverlay.style.display = 'none', 700);
+                } else {
+                    statusOverlay.style.display = 'flex';
+                    // Небольшая задержка перед возвращением opacity для плавности
+                    setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
+                    statusText.textContent = "СТРИМ ОФЛАЙН";
+                    statusDot.className = "w-5 h-5 rounded-full bg-gray-500 mb-3 shadow-none";
+                }
+            }
+
+            // Обработка входа ТОП 1
             if (data.type === 'entrance') {
                 playEntranceAnimation(data.username, data.avatar, data.coins);
             }
         };
 
         eventSource.onerror = () => {
-            console.error('❌ Потеряна связь с сервером. Переподключение...');
-            // Браузер (OBS) сам автоматически попытается переподключиться
+            statusOverlay.style.display = 'flex';
+            setTimeout(() => statusOverlay.classList.remove('opacity-0'), 10);
+            statusText.textContent = "ПОТЕРЯНА СВЯЗЬ С СЕРВЕРОМ";
+            statusDot.className = "w-5 h-5 rounded-full bg-red-600 animate-pulse mb-3";
         };
 
         // === АНИМАЦИЯ ===
@@ -141,7 +184,7 @@
 
             const entranceSound = new Audio('https://actions.google.com/sounds/v1/crowds/crowd_cheer.ogg');
             entranceSound.volume = 0.6;
-            entranceSound.play().catch(e => console.log('Звук заблокирован до первого клика (в OBS работает)'));
+            entranceSound.play().catch(e => console.log('Звук заблокирован (в OBS работает)'));
 
             alertBox.classList.add('active');
 
