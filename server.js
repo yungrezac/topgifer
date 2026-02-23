@@ -52,8 +52,18 @@ http.createServer((req, res) => {
                         <div class="bg-gray-700/50 p-6 rounded-xl border border-gray-600">
                             <label class="block text-sm font-medium text-gray-300 mb-2">Логин TikTok стримера (без @)</label>
                             <div class="flex gap-4">
-                                <input type="text" id="streamerInput" placeholder="Например: nneensi0" class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-yellow-500">
-                                <button onclick="connectStream()" class="bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(234,179,8,0.3)]">Подключить</button>
+                                <input type="text" id="streamerInput" placeholder="Например: nneensi0" class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-yellow-500" oninput="checkStatusDebounced()">
+                                <button id="connectBtn" onclick="toggleConnection()" class="bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(234,179,8,0.3)] min-w-[140px]">Подключить</button>
+                            </div>
+
+                            <!-- Контейнер для ссылки на виджет -->
+                            <div id="widgetLinkContainer" class="hidden mt-6 p-4 bg-gray-900/80 border border-yellow-500/30 rounded-lg">
+                                <p class="text-sm text-yellow-400/80 mb-2 font-semibold">✅ Подключено! Ссылка для OBS (Браузерный источник):</p>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" id="widgetLink" readonly class="flex-1 bg-black/50 border border-gray-600 rounded px-3 py-2 text-gray-300 text-sm focus:outline-none selection:bg-yellow-500/30">
+                                    <button onclick="copyLink()" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm transition font-medium">Копировать</button>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">Установите ширину 1920 и высоту 1080 в настройках OBS.</p>
                             </div>
                         </div>
 
@@ -65,7 +75,7 @@ http.createServer((req, res) => {
                             <button onclick="testAnimation()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(37,99,235,0.3)]">Запустить Тест</button>
                         </div>
                         
-                        <div id="statusBox" class="p-4 rounded-lg bg-gray-900 border border-gray-700 text-sm font-mono text-gray-300 min-h-[100px]">
+                        <div id="statusBox" class="p-4 rounded-lg bg-gray-900 border border-gray-700 text-sm font-mono text-gray-300 min-h-[120px] max-h-[200px] overflow-y-auto">
                             Статус системы: Готов.
                         </div>
                     </div>
@@ -74,26 +84,93 @@ http.createServer((req, res) => {
                 <script>
                     function log(msg) {
                         const box = document.getElementById('statusBox');
-                        box.innerHTML = '> ' + msg + '<br>' + box.innerHTML;
+                        const time = new Date().toLocaleTimeString();
+                        box.innerHTML = '<span class="text-gray-500">[' + time + ']</span> ' + msg + '<br>' + box.innerHTML;
                     }
 
-                    async function connectStream() {
-                        const user = document.getElementById('streamerInput').value.trim();
-                        if(!user) return alert('Введите логин!');
-                        log('Запрос на подключение к @' + user + '...');
-                        const res = await fetch('/api/connect?user=' + user);
-                        const data = await res.text();
-                        log(data);
+                    function updateUI(connected, user) {
+                        const btn = document.getElementById('connectBtn');
+                        const linkBox = document.getElementById('widgetLinkContainer');
+                        const linkInput = document.getElementById('widgetLink');
+
+                        if (connected) {
+                            btn.textContent = 'Отключить';
+                            btn.className = 'bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(220,38,38,0.3)] min-w-[140px]';
+                            linkBox.classList.remove('hidden');
+                            
+                            // Генерируем ссылку для OBS
+                            const currentUrl = window.location.origin;
+                            linkInput.value = currentUrl + '/tiktok_top_widget.html?user=' + user;
+                        } else {
+                            btn.textContent = 'Подключить';
+                            btn.className = 'bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-6 py-3 rounded-lg transition shadow-[0_0_15px_rgba(234,179,8,0.3)] min-w-[140px]';
+                            linkBox.classList.add('hidden');
+                        }
+                    }
+
+                    let debounceTimer;
+                    function checkStatusDebounced() {
+                        clearTimeout(debounceTimer);
+                        debounceTimer = setTimeout(checkStatus, 500);
+                    }
+
+                    async function checkStatus() {
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        if (!user) {
+                            updateUI(false, '');
+                            return;
+                        }
+                        try {
+                            const res = await fetch('/api/status?user=' + user);
+                            const data = await res.json();
+                            updateUI(data.connected, user);
+                        } catch(e) {}
+                    }
+
+                    async function toggleConnection() {
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        if(!user) return alert('Введите логин стримера!');
+
+                        const btn = document.getElementById('connectBtn');
+                        const isConnected = btn.textContent === 'Отключить';
+
+                        if (isConnected) {
+                            log('Отключение от @' + user + '...');
+                            try {
+                                const res = await fetch('/api/disconnect?user=' + user);
+                                log(await res.text());
+                                updateUI(false, user);
+                            } catch(e) { log('Ошибка отключения'); }
+                        } else {
+                            log('Запрос на подключение к @' + user + '...');
+                            try {
+                                const res = await fetch('/api/connect?user=' + user);
+                                log(await res.text());
+                                updateUI(true, user);
+                            } catch(e) { log('Ошибка подключения'); }
+                        }
                     }
 
                     async function testAnimation() {
-                        const user = document.getElementById('streamerInput').value.trim();
-                        if(!user) return alert('Сначала введите логин стримера, для которого запустить тест!');
+                        const user = document.getElementById('streamerInput').value.trim().toLowerCase();
+                        if(!user) return alert('Сначала введите логин стримера!');
                         log('Отправка тестового сигнала для @' + user + '...');
-                        const res = await fetch('/api/test?user=' + user);
-                        const data = await res.text();
-                        log(data);
+                        try {
+                            const res = await fetch('/api/test?user=' + user);
+                            log(await res.text());
+                        } catch(e) { log('Ошибка тестового сигнала'); }
                     }
+
+                    function copyLink() {
+                        const linkInput = document.getElementById('widgetLink');
+                        linkInput.select();
+                        linkInput.setSelectionRange(0, 99999);
+                        document.execCommand('copy');
+                        log('Ссылка скопирована в буфер обмена!');
+                    }
+
+                    // Проверяем статус при загрузке страницы, если браузер запомнил ввод
+                    window.onload = checkStatus;
                 </script>
             </body>
             </html>
@@ -110,12 +187,46 @@ http.createServer((req, res) => {
             startTikTokConnection(targetStreamer);
             res.end(`✅ Фоновый процесс запущен для @${targetStreamer}. Подключение в процессе...`);
         } else {
-            res.end(`ℹ️ Сервер уже подключен (или пытается подключиться) к @${targetStreamer}.`);
+            res.end(`ℹ️ Сервер уже подключен к @${targetStreamer}.`);
         }
         return;
     }
 
-    // 3. API: ТЕСТОВЫЙ ЗАПУСК АНИМАЦИИ
+    // 3. API: РУЧНОЕ ОТКЛЮЧЕНИЕ
+    if (pathname === '/api/disconnect') {
+        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        if (!targetStreamer) return res.end("Ошибка: не указан логин.");
+        
+        if (activeStreams.has(targetStreamer)) {
+            const streamData = activeStreams.get(targetStreamer);
+            streamData.intentionalDisconnect = true; // Флаг, чтобы предотвратить авто-реконнект
+            
+            try { streamData.connection.disconnect(); } catch (e) {}
+            
+            // Сообщаем открытым виджетам (если есть), что стрим отключен
+            broadcastToWidgets(targetStreamer, { type: 'status', online: false });
+            
+            // Закрываем все активные SSE соединения
+            streamData.sseClients.forEach(client => client.end());
+            
+            activeStreams.delete(targetStreamer);
+            res.end(`🛑 Отключено от @${targetStreamer}. Фоновый процесс остановлен.`);
+        } else {
+            res.end(`ℹ️ Активного подключения к @${targetStreamer} не найдено.`);
+        }
+        return;
+    }
+
+    // 4. API: СТАТУС ПОДКЛЮЧЕНИЯ
+    if (pathname === '/api/status') {
+        const targetStreamer = parsedUrl.query.user?.toLowerCase();
+        const isConnected = targetStreamer ? activeStreams.has(targetStreamer) : false;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ connected: isConnected }));
+        return;
+    }
+
+    // 5. API: ТЕСТОВЫЙ ЗАПУСК АНИМАЦИИ
     if (pathname === '/api/test') {
         const targetStreamer = parsedUrl.query.user?.toLowerCase();
         if (!targetStreamer || !activeStreams.has(targetStreamer)) {
@@ -138,7 +249,7 @@ http.createServer((req, res) => {
         return;
     }
 
-    // 4. SSE КАНАЛ ДЛЯ ВИДЖЕТА (OBS)
+    // 6. SSE КАНАЛ ДЛЯ ВИДЖЕТА (OBS)
     if (pathname === '/events') {
         const targetStreamer = parsedUrl.query.user;
         if (!targetStreamer) return res.end();
@@ -171,7 +282,7 @@ http.createServer((req, res) => {
         return;
     }
 
-    // 5. ОТДАЧА HTML ВИДЖЕТА
+    // 7. ОТДАЧА HTML ВИДЖЕТА
     if (pathname.startsWith('/tiktok_top_widget.html')) {
         const filePath = path.join(__dirname, 'tiktok_top_widget.html');
         fs.readFile(filePath, (err, data) => {
@@ -195,7 +306,8 @@ async function startTikTokConnection(streamerUsername) {
         connection: new WebcastPushConnection(streamerUsername, { enableExtendedGiftInfo: true }),
         sseClients: [],
         currentTop1: { username: null, coins: 0, avatar: '', lastAnnounced: 0 },
-        isOnline: false
+        isOnline: false,
+        intentionalDisconnect: false
     };
     activeStreams.set(streamerUsername, streamData);
 
@@ -215,17 +327,15 @@ async function startTikTokConnection(streamerUsername) {
                 const oldLeader = streamData.currentTop1.username;
 
                 // === ЛОГИКА СМЕНЫ ЛИДЕРА ===
-                // Если мы проверяем нового лидера (после подарка), старый лидер существовал, и он изменился!
                 if (checkForNewLeader && oldLeader && oldLeader !== normalizedTopUser) {
                     console.log(`[${streamerUsername}] 🚨 НОВЫЙ ТОП-1 ДАРИТЕЛЬ: ${topUser.username} перебил рекорд!`);
                     
-                    // Запускаем спец-анимацию "Новый Лидер"
                     broadcastToWidgets(streamerUsername, {
                         type: 'entrance',
                         username: topUser.username,
                         avatar: topUser.avatar_url,
                         coins: topUser.coins,
-                        isNewLeader: true // Специальный флаг для виджета
+                        isNewLeader: true 
                     });
                 }
 
@@ -242,7 +352,6 @@ async function startTikTokConnection(streamerUsername) {
         }
     };
 
-    // Первичная загрузка лидера (без триггера анимации смены)
     await updateTop1(false);
 
     const connectToStream = () => {
@@ -251,6 +360,7 @@ async function startTikTokConnection(streamerUsername) {
             streamData.isOnline = true;
             broadcastToWidgets(streamerUsername, { type: 'status', online: true });
         }).catch(err => {
+            if (streamData.intentionalDisconnect) return;
             console.error(`[${streamerUsername}] ❌ Ошибка подключения. Повтор через 15 сек...`);
             streamData.isOnline = false;
             broadcastToWidgets(streamerUsername, { type: 'status', online: false });
@@ -285,7 +395,7 @@ async function startTikTokConnection(streamerUsername) {
         }
     });
 
-    // === СОБЫТИЕ 2: ПОДАРКИ (Тут происходит проверка на НОВОГО Топ-1) ===
+    // === СОБЫТИЕ 2: ПОДАРКИ ===
     streamData.connection.on('gift', async (data) => {
         if (data.giftType === 1 && !data.repeatEnd) return;
 
@@ -309,7 +419,6 @@ async function startTikTokConnection(streamerUsername) {
                 avatar_url: avatar
             }], { onConflict: 'username' });
 
-            // Пересчитываем лидера и передаем флаг true (проверить, не сменился ли он!)
             await updateTop1(true);
         } catch (e) {
             console.error(`[${streamerUsername}] Ошибка сохранения:`, e.message);
@@ -318,7 +427,11 @@ async function startTikTokConnection(streamerUsername) {
 
     // === ОБРЫВ СВЯЗИ ===
     streamData.connection.on('disconnected', () => {
-        console.warn(`[${streamerUsername}] ⚠️ Стрим отключен.`);
+        if (streamData.intentionalDisconnect) {
+            console.log(`[${streamerUsername}] 🛑 Умышленное отключение. Авто-реконнект отменен.`);
+            return;
+        }
+        console.warn(`[${streamerUsername}] ⚠️ Стрим отключен. Переподключение через 15 сек...`);
         streamData.isOnline = false;
         broadcastToWidgets(streamerUsername, { type: 'status', online: false });
         setTimeout(connectToStream, 15000);
