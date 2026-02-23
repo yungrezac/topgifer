@@ -17,13 +17,18 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // Хранилище активных подключений к разным стримерам
-// Позволяет подключать виджеты к разным стримерам одновременно
 const activeStreams = new Map(); 
 
 function broadcastToWidgets(streamer, eventData) {
     if (activeStreams.has(streamer)) {
         const payload = `data: ${JSON.stringify(eventData)}\n\n`;
-        activeStreams.get(streamer).sseClients.forEach(client => client.write(payload));
+        activeStreams.get(streamer).sseClients.forEach(client => {
+            try {
+                client.write(payload);
+            } catch (e) {
+                console.error(`Ошибка отправки данных клиенту:`, e);
+            }
+        });
     }
 }
 
@@ -32,7 +37,7 @@ const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     const parsedUrl = url.parse(req.url, true);
 
-    // 1. Канал связи для виджета (считываем имя стримера из URL)
+    // 1. Канал связи для виджета (SSE)
     if (parsedUrl.pathname === '/events') {
         const targetStreamer = parsedUrl.query.user;
         
@@ -42,6 +47,8 @@ http.createServer((req, res) => {
             return;
         }
 
+        const normalizedStreamer = targetStreamer.toLowerCase();
+
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -50,18 +57,26 @@ http.createServer((req, res) => {
         });
 
         // Если к этому стримеру еще не подключены - подключаемся
-        if (!activeStreams.has(targetStreamer)) {
-            startTikTokConnection(targetStreamer);
+        if (!activeStreams.has(normalizedStreamer)) {
+            startTikTokConnection(normalizedStreamer);
         }
 
-        const streamData = activeStreams.get(targetStreamer);
+        const streamData = activeStreams.get(normalizedStreamer);
         streamData.sseClients.push(res);
 
-        // Сразу отправляем виджету текущий статус (онлайн или офлайн)
+        // Отправляем виджету текущий статус
         res.write(`data: ${JSON.stringify({ type: 'status', online: streamData.isOnline })}\n\n`);
 
+        // KEEP-ALIVE: Пингуем Railway каждые 25 сек, чтобы он не закрыл соединение с OBS
+        const keepAliveInterval = setInterval(() => {
+            res.write(': keepalive\n\n');
+        }, 25000);
+
         req.on('close', () => {
-            streamData.sseClients = streamData.sseClients.filter(c => c !== res);
+            clearInterval(keepAliveInterval);
+            if (activeStreams.has(normalizedStreamer)) {
+                streamData.sseClients = streamData.sseClients.filter(c => c !== res);
+            }
         });
         return;
     }
@@ -94,38 +109,48 @@ async function startTikTokConnection(streamerUsername) {
     console.log(`[${streamerUsername}] Создаем новое подключение...`);
     
     const streamData = {
-        connection: new WebcastPushConnection(streamerUsername),
+        connection: new WebcastPushConnection(streamerUsername, {
+            enableExtendedGiftInfo: true,
+            enableWebsocketUpgrade: true
+        }),
         sseClients: [],
-        currentTop1: { username: null, coins: 0, lastAnnounced: 0 }, // Добавили lastAnnounced для кулдауна
+        currentTop1: { username: null, coins: 0, lastAnnounced: 0 },
         isOnline: false
     };
     activeStreams.set(streamerUsername, streamData);
 
-    // Функция обновления Топ-1 для этого стримера
+    // Безопасное обновление Топ-1
     const updateTop1 = async () => {
         try {
+            // Используем limit(1) вместо single(), чтобы избежать краша при пустой БД
             const { data, error } = await supabase
                 .from('top_donators')
                 .select('username, coins')
                 .order('coins', { ascending: false })
-                .limit(1)
-                .single();
+                .limit(1);
             
-            if (data && !error) {
-                // Если Топ 1 сменился, пишем в лог
-                if (streamData.currentTop1.username !== data.username) {
-                    console.log(`[${streamerUsername}] 🏆 Новый ТОП-1: ${data.username} (${data.coins} монет)`);
-                    streamData.currentTop1.lastAnnounced = 0; // Сбрасываем кулдаун для нового лидера
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                const topUser = data[0];
+                const normalizedTopUser = topUser.username.toLowerCase();
+
+                // Проверяем, сменился ли лидер
+                if (streamData.currentTop1.username !== normalizedTopUser) {
+                    console.log(`[${streamerUsername}] 🏆 Новый ТОП-1: ${topUser.username} (${topUser.coins} монет)`);
+                    streamData.currentTop1.lastAnnounced = 0; // Сбрасываем кулдаун
                 }
-                streamData.currentTop1.username = data.username;
-                streamData.currentTop1.coins = data.coins;
+                
+                streamData.currentTop1.username = normalizedTopUser;
+                streamData.currentTop1.coins = topUser.coins;
+            } else {
+                console.log(`[${streamerUsername}] База донатеров пока пуста.`);
             }
         } catch (e) {
-            console.error(`[${streamerUsername}] Ошибка обновления Топ 1:`, e);
+            console.error(`[${streamerUsername}] Ошибка обновления Топ 1:`, e.message);
         }
     };
 
-    // Загружаем лидера сразу
     await updateTop1();
 
     // Попытка подключения
@@ -143,62 +168,78 @@ async function startTikTokConnection(streamerUsername) {
     };
     connectToStream();
 
-    // === ЕДИНАЯ ФУНКЦИЯ ПРОВЕРКИ АКТИВНОСТИ ТОП-1 ===
-    // TikTok часто "глотает" события входа. Поэтому мы ловим любую активность!
-    const checkAndAnnounceTop1 = async (username, avatar, actionType) => {
-        if (streamData.currentTop1.username && username === streamData.currentTop1.username) {
+    // ЕДИНАЯ ФУНКЦИЯ ПРОВЕРКИ АКТИВНОСТИ ТОП-1
+    const checkAndAnnounceTop1 = async (rawUsername, avatar, actionType) => {
+        if (!streamData.currentTop1.username || !rawUsername) return;
+
+        const incomingUser = rawUsername.toLowerCase();
+
+        if (incomingUser === streamData.currentTop1.username) {
             const now = Date.now();
             
-            // Кулдаун 2 минуты (120000 мс). Чтобы виджет не спамил, если ТОП-1 активно пишет в чат.
+            // Кулдаун 2 минуты
             if (now - streamData.currentTop1.lastAnnounced > 120000) {
-                console.log(`[${streamerUsername}] 👑 ВНИМАНИЕ! ТОП 1 АКТИВЕН (${actionType}): ${username}`);
+                console.log(`[${streamerUsername}] 👑 ВНИМАНИЕ! ТОП 1 АКТИВЕН (${actionType}): ${rawUsername}`);
                 streamData.currentTop1.lastAnnounced = now;
 
                 broadcastToWidgets(streamerUsername, {
                     type: 'entrance',
-                    username: username,
+                    username: rawUsername, // Отправляем оригинальный ник для красивого отображения
                     avatar: avatar,
                     coins: streamData.currentTop1.coins
                 });
 
-                await supabase.from('stream_events').insert([{ type: 'join', username: username, avatar_url: avatar }]);
+                // Пишем в БД асинхронно, не блокируя поток
+                supabase.from('stream_events')
+                    .insert([{ type: 'join', username: rawUsername, avatar_url: avatar }])
+                    .then(({ error }) => { if (error) console.error("Ошибка записи события:", error); });
             }
         }
     };
 
-    // Слушаем сразу ТРИ типа событий для максимальной надежности:
+    // Слушаем активность
     streamData.connection.on('member', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'зашел на стрим'));
     streamData.connection.on('chat', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'написал в чат'));
     streamData.connection.on('like', (data) => checkAndAnnounceTop1(data.uniqueId, data.profilePictureUrl, 'отправил лайк'));
 
-    // === СОБЫТИЕ 2: ПОДАРОК ===
+    // Обработка подарков
     streamData.connection.on('gift', async (data) => {
-        if (data.giftType === 1 && !data.repeatEnd) return;
+        if (data.giftType === 1 && !data.repeatEnd) return; // Игнорируем промежуточные комбо
 
-        const username = data.uniqueId;
+        const rawUsername = data.uniqueId;
+        const normalizedUsername = rawUsername.toLowerCase();
         const coins = data.diamondCount * data.repeatCount;
         const avatar = data.profilePictureUrl;
 
-        console.log(`[${streamerUsername}] 🎁 Подарок от ${username}: ${coins} монет!`);
+        console.log(`[${streamerUsername}] 🎁 Подарок от ${rawUsername}: ${coins} монет!`);
 
-        const { data: userRecord } = await supabase.from('top_donators').select('coins').eq('username', username).single();
-        const currentCoins = userRecord ? userRecord.coins : 0;
+        try {
+            // Ищем пользователя (без учета регистра)
+            const { data: userRecord } = await supabase
+                .from('top_donators')
+                .select('coins')
+                .ilike('username', normalizedUsername)
+                .limit(1);
 
-        await supabase.from('top_donators').upsert([{
-            username: username,
-            coins: currentCoins + coins,
-            avatar_url: avatar
-        }], { onConflict: 'username' });
+            const currentCoins = (userRecord && userRecord.length > 0) ? userRecord[0].coins : 0;
 
-        // Важно: После каждого подарка сразу пересчитываем лидера!
-        await updateTop1();
+            await supabase.from('top_donators').upsert([{
+                username: rawUsername, // Храним оригинальный кейс
+                coins: currentCoins + coins,
+                avatar_url: avatar
+            }], { onConflict: 'username' });
+
+            await updateTop1();
+        } catch (e) {
+            console.error(`[${streamerUsername}] Ошибка сохранения подарка:`, e.message);
+        }
     });
 
-    // === ОБРЫВ СВЯЗИ ===
+    // Обработка дисконнекта
     streamData.connection.on('disconnected', () => {
         console.warn(`[${streamerUsername}] ⚠️ Стрим закончился или отключен.`);
         streamData.isOnline = false;
         broadcastToWidgets(streamerUsername, { type: 'status', online: false });
-        setTimeout(connectToStream, 15000); // Пытаемся переподключиться
+        setTimeout(connectToStream, 15000);
     });
 }
