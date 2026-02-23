@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Top 1 Widget</title>
+    <!-- Tailwind CSS для стилей -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Canvas Confetti для красивых эффектов при входе -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        /* Устанавливаем прозрачный фон для OBS */
+        body {
+            background-color: transparent;
+            overflow: hidden; /* Скрываем скроллы */
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            color: white;
+        }
+
+        /* Если это не OBS, даем небольшой фон для предпросмотра (в OBS body прозрачный) */
+        body.preview-mode {
+            background-color: #1a1a2e;
+            background-image: radial-gradient(circle at center, #2a2a4e 0%, #1a1a2e 100%);
+        }
+
+        /* Постоянный виджет Топ-1 */
+        .glass-panel {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 215, 0, 0.2);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .gold-text {
+            background: linear-gradient(to right, #FFD700, #FFA500, #FFD700);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0px 0px 10px rgba(255, 215, 0, 0.3);
+        }
+
+        /* Анимация входа Топ-1 */
+        #entrance-alert {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-align: center;
+        }
+
+        #entrance-alert.active {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+        }
+
+        .epic-glow {
+            background: linear-gradient(135deg, rgba(20,20,30,0.95), rgba(10,10,15,0.95));
+            box-shadow: 0 0 80px rgba(255, 215, 0, 0.5), inset 0 0 40px rgba(255, 215, 0, 0.3);
+            border: 3px solid rgba(255, 215, 0, 0.6);
+        }
+
+        /* Эффект вращающихся лучей на заднем фоне карточки */
+        .rays {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 150%;
+            height: 150%;
+            background: repeating-conic-gradient(from 0deg, transparent 0deg 15deg, rgba(255, 215, 0, 0.08) 15deg 30deg);
+            transform: translate(-50%, -50%);
+            animation: spin-rays 30s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes spin-rays {
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .crown-icon {
+            animation: float 2s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px) rotate(-5deg); }
+            50% { transform: translateY(-10px) rotate(5deg); }
+            100% { transform: translateY(0px) rotate(-5deg); }
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 20px rgba(255, 215, 0, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
+        }
+
+        .avatar-container::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border-radius: 50%;
+            animation: pulse-ring 2s infinite;
+            z-index: -1;
+        }
+
+        /* Скрытие панели управления в OBS */
+        .controls-hidden #control-panel {
+            display: none;
+        }
+    </style>
+</head>
+<body class="preview-mode w-screen h-screen relative" id="main-body">
+
+    <!-- Анимация Входа (Скрыта по умолчанию) -->
+    <div id="entrance-alert" class="w-[700px] glass-panel epic-glow p-12 rounded-[2.5rem] flex flex-col items-center justify-center relative z-50 overflow-hidden">
+        <!-- Вращающиеся лучи на фоне -->
+        <div class="rays"></div>
+        
+        <div class="text-7xl mb-4 crown-icon z-10 drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]">👑</div>
+        
+        <!-- Увеличенная аватарка -->
+        <div class="relative avatar-container w-48 h-48 rounded-full border-[6px] border-yellow-400 overflow-hidden mb-6 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10">
+            <img id="entrance-avatar" src="" alt="Avatar" class="w-full h-full object-cover">
+        </div>
+        
+        <h2 class="text-3xl text-yellow-200 font-bold mb-2 uppercase tracking-widest drop-shadow-md z-10">Внимание! На стрим зашел</h2>
+        
+        <h1 class="text-6xl font-extrabold gold-text mb-4 z-10 drop-shadow-xl" id="entrance-username">Username</h1>
+        
+        <!-- Количество монет за все время -->
+        <div class="text-2xl font-bold text-white mb-6 z-10 flex items-center gap-2 bg-black/40 px-6 py-2 rounded-2xl border border-white/10 backdrop-blur-md">
+            Отправил: <span id="entrance-coins" class="text-yellow-400 text-3xl mx-1 drop-shadow-md">0</span> 
+            <svg class="w-7 h-7 text-yellow-400 drop-shadow-md" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 14a6 6 0 110-12 6 6 0 010 12zm0-9a1 1 0 00-1 1v2.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V8a1 1 0 00-1-1z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
+        </div>
+
+        <div class="bg-gradient-to-r from-yellow-600/60 via-yellow-400/60 to-yellow-600/60 px-12 py-5 rounded-full border-2 border-yellow-400/80 shadow-[0_0_40px_rgba(255,215,0,0.6)] z-10 transform hover:scale-105 transition-transform">
+            <span class="text-yellow-200 font-black text-4xl tracking-widest uppercase drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-shadow-xl">ТОП 1 ДАРИТЕЛЬ</span>
+        </div>
+    </div>
+
+
+    <!-- ПАНЕЛЬ УПРАВЛЕНИЯ (Для тестов) -->
+    <div id="control-panel" class="absolute bottom-8 right-8 bg-gray-900/90 p-6 rounded-xl border border-gray-700 shadow-2xl w-80 text-sm z-50 backdrop-blur-md">
+        <h3 class="text-lg font-bold text-white mb-4 border-b border-gray-700 pb-2">Симуляция TikTok (Тест)</h3>
+        
+        <div class="mb-4">
+            <label class="block text-gray-400 mb-1">Имя пользователя:</label>
+            <input type="text" id="sim-user" value="User123" class="w-full bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+        </div>
+        
+        <div class="mb-4">
+            <label class="block text-gray-400 mb-1">Количество монет (подарок):</label>
+            <div class="flex gap-2">
+                <input type="number" id="sim-coins" value="1000" class="w-full bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+                <button onclick="simulateGift()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold transition">Подарить</button>
+            </div>
+        </div>
+
+        <div class="mb-6">
+            <label class="block text-gray-400 mb-1">Событие входа (Зашел на стрим):</label>
+            <button onclick="simulateJoin()" class="w-full bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold transition">Симулировать Вход</button>
+        </div>
+
+        <hr class="border-gray-700 my-4">
+
+        <div class="flex gap-2">
+            <button onclick="clearDatabase()" class="w-1/2 bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded text-xs transition">Очистить Базу</button>
+            <button onclick="toggleOBSMode()" class="w-1/2 bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded text-xs transition">Режим OBS (Скрыть)</button>
+        </div>
+        <p class="text-xs text-gray-500 mt-3 text-center">В OBS эту панель не будет видно, если нажать "Режим OBS" или добавить параметр ?obs=1 к ссылке.</p>
+    </div>
+
+    <script>
+        // === ЛОГИКА ДАННЫХ (БАЗА) ===
+        // Загружаем историю донатов из localStorage
+        let donatorsDB = JSON.parse(localStorage.getItem('tiktok_donators_db')) || {};
+        let currentTop1 = null;
+        let isAnimating = false;
+
+        // Аватарки для симуляции (если нет реальной)
+        const getAvatar = (username) => `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}&backgroundColor=b6e3f4`;
+
+        // Сохранение в базу
+        function saveDB() {
+            localStorage.setItem('tiktok_donators_db', JSON.stringify(donatorsDB));
+            updateTop1();
+        }
+
+        // Обновление лидера
+        function updateTop1() {
+            let maxCoins = 0;
+            let topUser = null;
+
+            for (const [username, data] of Object.entries(donatorsDB)) {
+                if (data.coins > maxCoins) {
+                    maxCoins = data.coins;
+                    topUser = username;
+                }
+            }
+
+            if (topUser) {
+                currentTop1 = {
+                    username: topUser,
+                    coins: maxCoins,
+                    avatar: donatorsDB[topUser].avatar || getAvatar(topUser)
+                };
+            } else {
+                currentTop1 = null;
+            }
+        }
+
+        // === СОБЫТИЯ TIKTOK (API для подключения) ===
+        // Эту функцию нужно вызывать из вашего скрипта-коннектора TikTok, 
+        // когда кто-то дарит подарок.
+        function onGiftReceived(username, coinsAmount, avatarUrl) {
+            if (!donatorsDB[username]) {
+                donatorsDB[username] = { coins: 0, avatar: avatarUrl };
+            }
+            donatorsDB[username].coins += coinsAmount;
+            // Обновляем аватарку, вдруг изменилась
+            if (avatarUrl) donatorsDB[username].avatar = avatarUrl; 
+            
+            saveDB();
+        }
+
+        // Эту функцию вызывать, когда зритель заходит на стрим.
+        function onViewerJoined(username, avatarUrl) {
+            if (isAnimating) return; // Не прерываем текущую анимацию
+
+            // Если зашедший пользователь - наш Топ-1
+            if (currentTop1 && currentTop1.username === username) {
+                // Передаем также количество монет
+                playEntranceAnimation(username, avatarUrl || currentTop1.avatar, currentTop1.coins);
+            }
+        }
+
+        // === АНИМАЦИЯ ===
+        function playEntranceAnimation(username, avatar, coins) {
+            isAnimating = true;
+            const alertBox = document.getElementById('entrance-alert');
+            
+            document.getElementById('entrance-username').textContent = username;
+            document.getElementById('entrance-avatar').src = avatar;
+
+            // Обновляем количество монет
+            document.getElementById('entrance-coins').textContent = (coins || 0).toLocaleString();
+
+            // Воспроизводим звук (ликование толпы).
+            // Чтобы использовать свой звук, положите файл sound.mp3 рядом с HTML 
+            // и замените ссылку ниже на 'sound.mp3'
+            const entranceSound = new Audio('https://actions.google.com/sounds/v1/crowds/crowd_cheer.ogg');
+            entranceSound.volume = 0.6; // Громкость 60%
+            entranceSound.play().catch(e => console.log('Автовоспроизведение заблокировано браузером. В OBS будет работать.', e));
+
+            // Показываем плашку
+            alertBox.classList.add('active');
+
+            // Запускаем конфетти
+            fireConfetti();
+            setTimeout(fireConfetti, 500);
+            setTimeout(fireConfetti, 1000);
+
+            // Прячем через 6 секунд
+            setTimeout(() => {
+                alertBox.classList.remove('active');
+                setTimeout(() => { isAnimating = false; }, 500); // Кулдаун
+            }, 6000);
+        }
+
+        function fireConfetti() {
+            var duration = 3 * 1000;
+            var end = Date.now() + duration;
+
+            (function frame() {
+                confetti({
+                    particleCount: 5,
+                    angle: 60,
+                    spread: 55,
+                    origin: { x: 0 },
+                    colors: ['#FFD700', '#FFA500', '#FFFFFF']
+                });
+                confetti({
+                    particleCount: 5,
+                    angle: 120,
+                    spread: 55,
+                    origin: { x: 1 },
+                    colors: ['#FFD700', '#FFA500', '#FFFFFF']
+                });
+
+                if (Date.now() < end) {
+                    requestAnimationFrame(frame);
+                }
+            }());
+        }
+
+        // === СИМУЛЯТОР (Для Панели управления) ===
+        function simulateGift() {
+            const user = document.getElementById('sim-user').value.trim();
+            const coins = parseInt(document.getElementById('sim-coins').value) || 0;
+            if (!user || coins <= 0) return;
+
+            onGiftReceived(user, coins, getAvatar(user));
+        }
+
+        function simulateJoin() {
+            const user = document.getElementById('sim-user').value.trim();
+            if (!user) return;
+
+            onViewerJoined(user, getAvatar(user));
+        }
+
+        function clearDatabase() {
+            if (confirm("Вы уверены, что хотите обнулить всех дарителей?")) {
+                donatorsDB = {};
+                saveDB();
+            }
+        }
+
+        function toggleOBSMode() {
+            document.body.classList.toggle('controls-hidden');
+            document.body.classList.remove('preview-mode');
+        }
+
+        // Автоматически скрывать панель, если в URL есть ?obs=1
+        window.onload = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('obs') === '1') {
+                document.body.classList.add('controls-hidden');
+                document.body.classList.remove('preview-mode');
+            }
+            updateTop1(); // Загружаем данные при старте
+        };
+
+        // Экспортируем функции в window, чтобы внешние скрипты (например, вебсокет TikTok) могли их дергать
+        window.tiktokApi = {
+            onGiftReceived,
+            onViewerJoined
+        };
+
+    </script>
+</body>
+</html>
